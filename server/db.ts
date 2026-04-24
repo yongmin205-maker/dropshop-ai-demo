@@ -1,11 +1,21 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  conversations,
+  escalations,
+  messages,
+  processingLogs,
+  users,
+  type InsertConversation,
+  type InsertEscalation,
+  type InsertMessage,
+  type InsertProcessingLog,
+  type InsertUser,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -22,17 +32,11 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");
   }
-
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
-  }
+  if (!db) return;
 
   try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
+    const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
 
     const textFields = ["name", "email", "loginMethod"] as const;
@@ -56,21 +60,18 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+      values.role = "admin";
+      updateSet.role = "admin";
     }
 
     if (!values.lastSignedIn) {
       values.lastSignedIn = new Date();
     }
-
     if (Object.keys(updateSet).length === 0) {
       updateSet.lastSignedIn = new Date();
     }
 
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
+    await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
   } catch (error) {
     console.error("[Database] Failed to upsert user:", error);
     throw error;
@@ -79,14 +80,118 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+/* ----- DropShop conversation helpers ----- */
+
+export async function getOrCreateConversation(phone: string, customerName?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db.select().from(conversations).where(eq(conversations.phone, phone)).limit(1);
+  if (existing.length > 0) return existing[0];
+
+  const insertValue: InsertConversation = { phone, customerName: customerName ?? null };
+  const result = await db.insert(conversations).values(insertValue);
+  // mysql2 driver returns insertId on the first element
+  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
+    ?? (result as unknown as { insertId?: number }).insertId;
+  if (insertId) {
+    const fresh = await db.select().from(conversations).where(eq(conversations.id, insertId)).limit(1);
+    if (fresh[0]) return fresh[0];
+  }
+  // Fallback: re-query by phone
+  const refetch = await db.select().from(conversations).where(eq(conversations.phone, phone)).limit(1);
+  return refetch[0]!;
+}
+
+export async function appendMessage(value: InsertMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(messages).values(value);
+  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
+    ?? (result as unknown as { insertId?: number }).insertId;
+  if (insertId) {
+    const rows = await db.select().from(messages).where(eq(messages.id, insertId)).limit(1);
+    return rows[0]!;
+  }
+  // Fallback: latest message in conversation
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, value.conversationId))
+    .orderBy(desc(messages.id))
+    .limit(1);
+  return rows[0]!;
+}
+
+export async function appendProcessingLog(value: InsertProcessingLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(processingLogs).values(value);
+}
+
+export async function createEscalation(value: InsertEscalation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(escalations).values(value);
+  // mark conversation
+  await db
+    .update(conversations)
+    .set({ escalated: 1 })
+    .where(eq(conversations.id, value.conversationId));
+}
+
+export async function listConversations(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(conversations).orderBy(desc(conversations.updatedAt)).limit(limit);
+}
+
+export async function getConversationMessages(conversationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
+    .orderBy(messages.id);
+}
+
+export async function getConversationLogs(conversationId: number, limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(processingLogs)
+    .where(eq(processingLogs.conversationId, conversationId))
+    .orderBy(desc(processingLogs.id))
+    .limit(limit);
+}
+
+export async function getOpenEscalations() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(escalations)
+    .where(eq(escalations.status, "open"))
+    .orderBy(desc(escalations.createdAt));
+}
+
+export async function resolveEscalation(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(escalations)
+    .set({ status: "resolved", resolvedAt: new Date() })
+    .where(eq(escalations.id, id));
+}
+
+export async function updateConversationIntent(id: number, intent: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(conversations).set({ lastIntent: intent }).where(eq(conversations.id, id));
+}
