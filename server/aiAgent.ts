@@ -7,9 +7,15 @@ import {
   listAllPrices,
   searchPrice,
 } from "./mockCleanCloud";
+import {
+  listKnowledge,
+  listRejections,
+  listStyleExamples,
+} from "./db";
+import { embedText, topK } from "./embeddings";
 
 /* ============================================================
- * AI Agent — intent classification + DropShop reply generation
+ * AI Agent — intent classification + RAG-aware draft generation
  * ============================================================ */
 
 export const INTENT_LABELS = [
@@ -33,16 +39,33 @@ export interface AgentStep {
   detail?: unknown;
 }
 
-export interface AgentResult {
+export interface RagContext {
+  knowledge: Array<{ title: string; body: string; score: number }>;
+  styleExamples: Array<{
+    intent: string;
+    customerBody: string;
+    approvedReply: string;
+    score: number;
+  }>;
+  rejectionLessons: Array<{
+    intent: string;
+    rejectedReply: string;
+    reason: string;
+    score: number;
+  }>;
+}
+
+export interface AgentDraftResult {
   intent: Intent;
-  reply: string | null; // null when escalated (no auto-reply)
+  reply: string | null; // null when escalated (no draft, only handoff)
   escalated: boolean;
   escalationReason?: string;
   steps: AgentStep[];
   toolContext: Record<string, unknown>;
+  ragContext: RagContext;
 }
 
-/* ----- Intent classifier (LLM with strict JSON schema) ----- */
+/* ----- Intent classifier ----- */
 
 const CLASSIFIER_SYSTEM = `You are an intent classifier for DropShop, a premium NYC dry-cleaning service.
 Classify the customer's SMS into EXACTLY ONE of these intents:
@@ -69,10 +92,7 @@ export async function classifyIntent(body: string): Promise<Intent> {
         schema: {
           type: "object",
           properties: {
-            intent: {
-              type: "string",
-              enum: [...INTENT_LABELS],
-            },
+            intent: { type: "string", enum: [...INTENT_LABELS] },
           },
           required: ["intent"],
           additionalProperties: false,
@@ -80,18 +100,17 @@ export async function classifyIntent(body: string): Promise<Intent> {
       },
     },
   });
-
   try {
     const content = res.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(typeof content === "string" ? content : "{}");
     if (INTENT_LABELS.includes(parsed.intent)) return parsed.intent as Intent;
   } catch {
-    // fall through
+    /* fall through */
   }
   return "Membership & Pricing";
 }
 
-/* ----- Reply generator ----- */
+/* ----- Reply generator with RAG few-shot ----- */
 
 const BRAND_VOICE = `You are the official SMS assistant for DropShop, a premium NYC dry-cleaning concierge.
 Voice: warm, polished, concise, never salesy. Always sign off with a short single-line "— DropShop".
@@ -99,26 +118,111 @@ Rules:
 - Keep replies under 280 characters when possible.
 - Never invent prices, ETAs, or order numbers — use only what the tool data provides.
 - Never confirm pickup unless the data shows the customer exists.
-- Use the customer's first name if you know it.
+- Use the customer's first name if known.
 - Use the four exact order statuses verbatim when relevant: Awaiting Pickup, Cleaning, Ready to Deliver, Completed.
-- Never apologize excessively. One graceful sentence is enough.`;
+- Never apologize excessively; one graceful sentence is enough.`;
+
+function formatRagBlock(rag: RagContext): string {
+  const parts: string[] = [];
+  if (rag.knowledge.length) {
+    parts.push(
+      "RELEVANT STORE FACTS (Knowledge Base):\n" +
+        rag.knowledge
+          .map((k) => `- ${k.title}: ${k.body}`)
+          .join("\n")
+    );
+  }
+  if (rag.styleExamples.length) {
+    parts.push(
+      "APPROVED PAST REPLIES (match this tone, never contradict the prior gold replies):\n" +
+        rag.styleExamples
+          .map(
+            (ex, i) =>
+              `Example ${i + 1} [${ex.intent}]\n  Customer: ${ex.customerBody}\n  Approved DropShop reply: ${ex.approvedReply}`
+          )
+          .join("\n")
+    );
+  }
+  if (rag.rejectionLessons.length) {
+    parts.push(
+      "LESSONS FROM REJECTED DRAFTS (do NOT repeat these mistakes):\n" +
+        rag.rejectionLessons
+          .map(
+            (r, i) =>
+              `Lesson ${i + 1} [${r.intent}]\n  Rejected draft: ${r.rejectedReply}\n  Manager reason: ${r.reason}`
+          )
+          .join("\n")
+    );
+  }
+  return parts.join("\n\n");
+}
+
+export async function retrieveRag(opts: {
+  body: string;
+  intent: Intent;
+}): Promise<RagContext> {
+  const [allKnowledge, allExamples, allRejections] = await Promise.all([
+    listKnowledge(),
+    listStyleExamples(),
+    listRejections(),
+  ]);
+  const queryEmb = await embedText(opts.body);
+
+  const kTop = topK(queryEmb, allKnowledge, 3)
+    .filter((r) => r.score > 0)
+    .map((r) => ({ title: r.title, body: r.body, score: r.score }));
+
+  // Prefer examples with the same intent; fall back to cross-intent if sparse
+  const sameIntentExamples = allExamples.filter((e) => e.intent === opts.intent);
+  const examplePool = sameIntentExamples.length >= 2 ? sameIntentExamples : allExamples;
+  const eTop = topK(queryEmb, examplePool, 3)
+    .filter((r) => r.score > 0)
+    .map((r) => ({
+      intent: r.intent,
+      customerBody: r.customerBody,
+      approvedReply: r.approvedReply,
+      score: r.score,
+    }));
+
+  const rTop = topK(queryEmb, allRejections, 2)
+    .filter((r) => r.score > 0)
+    .map((r) => ({
+      intent: r.intent,
+      rejectedReply: r.rejectedReply,
+      reason: r.reason,
+      score: r.score,
+    }));
+
+  return {
+    knowledge: kTop,
+    styleExamples: eTop,
+    rejectionLessons: rTop,
+  };
+}
 
 async function generateReply(opts: {
   body: string;
   intent: Intent;
   toolContext: Record<string, unknown>;
+  rag: RagContext;
+  managerRejectReason?: string; // hint when regenerating after a reject
 }): Promise<string> {
+  const ragBlock = formatRagBlock(opts.rag);
+  const regenHint = opts.managerRejectReason
+    ? `\n\nIMPORTANT — the manager just rejected the previous draft with reason: """${opts.managerRejectReason}""". Rewrite the reply so it clearly addresses that feedback.`
+    : "";
+
   const res = await invokeLLM({
     messages: [
       { role: "system", content: BRAND_VOICE },
       {
         role: "user",
-        content: `Intent: ${opts.intent}
-Customer message: """${opts.body}"""
-Tool data (mock CleanCloud POS):
-${JSON.stringify(opts.toolContext, null, 2)}
-
-Compose the SMS reply.`,
+        content:
+          `Intent: ${opts.intent}\n` +
+          `Customer message: """${opts.body}"""\n\n` +
+          `Tool data (Mock CleanCloud POS):\n${JSON.stringify(opts.toolContext, null, 2)}\n\n` +
+          (ragBlock ? `${ragBlock}\n\n` : "") +
+          `Compose the SMS reply for DropShop.${regenHint}`,
       },
     ],
   });
@@ -128,24 +232,26 @@ Compose the SMS reply.`,
     : "Thanks for reaching DropShop. We'll get back to you shortly.\n— DropShop";
 }
 
-/* ----- Main entry ----- */
+/* ----- Main entry: draft generation (does NOT send) ----- */
 
-export async function runAgent(opts: {
+export async function draftAgentReply(opts: {
   phone: string;
   body: string;
-}): Promise<AgentResult> {
+  managerRejectReason?: string;
+  intentOverride?: Intent;
+}): Promise<AgentDraftResult> {
   const steps: AgentStep[] = [];
 
-  const intent = await classifyIntent(opts.body);
+  const intent = opts.intentOverride ?? (await classifyIntent(opts.body));
   steps.push({
     step: "intent_detected",
     label: `Intent classified as ${intent}`,
     detail: { intent },
   });
 
-  // Critical Escalation — never auto-reply
   if (intent === "Critical Escalation") {
-    const reason = "Critical message detected — auto-reply suspended, manager paged.";
+    const reason =
+      "Critical message detected — auto-reply suspended, manager paged.";
     steps.push({
       step: "escalated",
       label: reason,
@@ -158,10 +264,11 @@ export async function runAgent(opts: {
       escalationReason: reason,
       steps,
       toolContext: {},
+      ragContext: { knowledge: [], styleExamples: [], rejectionLessons: [] },
     };
   }
 
-  // Tool dispatch
+  // Tool dispatch (mock POS)
   const customer = await getCustomerByPhone(opts.phone);
   const toolContext: Record<string, unknown> = {
     customer: customer
@@ -170,7 +277,10 @@ export async function runAgent(opts: {
           membership: customer.membership,
           address: customer.address,
         }
-      : { found: false, note: "Phone not found in CleanCloud — treat as new lead." },
+      : {
+          found: false,
+          note: "Phone not found in CleanCloud — treat as new lead.",
+        },
   };
   steps.push({
     step: "mock_api_called",
@@ -230,14 +340,26 @@ export async function runAgent(opts: {
     });
   }
 
+  // RAG retrieval
+  const rag = await retrieveRag({ body: opts.body, intent });
+  steps.push({
+    step: "mock_api_called",
+    label: `RAG retrieval → ${rag.knowledge.length} facts, ${rag.styleExamples.length} style examples, ${rag.rejectionLessons.length} rejection lessons`,
+    detail: rag,
+  });
+
   const reply = await generateReply({
     body: opts.body,
     intent,
     toolContext,
+    rag,
+    managerRejectReason: opts.managerRejectReason,
   });
   steps.push({
     step: "response_drafted",
-    label: `Drafted DropShop reply (${reply.length} chars)`,
+    label: opts.managerRejectReason
+      ? `Regenerated DropShop draft (${reply.length} chars) after manager feedback`
+      : `Drafted DropShop reply (${reply.length} chars) — awaiting approval`,
     detail: { reply },
   });
 
@@ -247,5 +369,11 @@ export async function runAgent(opts: {
     escalated: false,
     steps,
     toolContext,
+    ragContext: rag,
   };
 }
+
+// Backwards compatibility: some existing callers used runAgent.
+// In the HITL flow the "run" simply returns the draft; the caller decides
+// whether to auto-send (for confidence auto-send mode) or stage for approval.
+export const runAgent = draftAgentReply;

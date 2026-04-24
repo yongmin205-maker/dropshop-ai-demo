@@ -15,6 +15,13 @@
       "when": 1777061941451,
       "tag": "0001_shiny_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1777064210544,
+      "tag": "0002_wise_joshua_kane",
+      "breakpoints": true
     }
   ]
 }

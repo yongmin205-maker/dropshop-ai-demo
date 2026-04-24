@@ -195,3 +195,116 @@ export async function updateConversationIntent(id: number, intent: string) {
   if (!db) return;
   await db.update(conversations).set({ lastIntent: intent }).where(eq(conversations.id, id));
 }
+
+/* ----- Human-in-the-Loop + RAG helpers ----- */
+
+import {
+  drafts,
+  styleExamples,
+  rejections,
+  knowledgeChunks,
+  type InsertDraft,
+  type InsertStyleExample,
+  type InsertRejection,
+  type InsertKnowledgeChunk,
+  type Draft,
+  type StyleExample,
+  type Rejection,
+  type KnowledgeChunk,
+} from "../drizzle/schema";
+
+export async function insertDraft(value: InsertDraft): Promise<Draft> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(drafts).values(value);
+  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
+    ?? (result as unknown as { insertId?: number }).insertId;
+  if (insertId) {
+    const rows = await db.select().from(drafts).where(eq(drafts.id, insertId)).limit(1);
+    return rows[0]!;
+  }
+  const rows = await db
+    .select()
+    .from(drafts)
+    .where(eq(drafts.inboundMessageId, value.inboundMessageId))
+    .orderBy(desc(drafts.id))
+    .limit(1);
+  return rows[0]!;
+}
+
+export async function getDraftById(id: number): Promise<Draft | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(drafts).where(eq(drafts.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function updateDraftStatus(
+  id: number,
+  status: Draft["status"]
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(drafts).set({ status }).where(eq(drafts.id, id));
+}
+
+export async function getLatestPendingDraftForMessage(
+  messageId: number
+): Promise<Draft | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(drafts)
+    .where(eq(drafts.inboundMessageId, messageId))
+    .orderBy(desc(drafts.id))
+    .limit(1);
+  return rows[0];
+}
+
+export async function listPendingDrafts(limit = 50): Promise<Draft[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(drafts)
+    .where(eq(drafts.status, "pending_approval"))
+    .orderBy(desc(drafts.id))
+    .limit(limit);
+}
+
+export async function insertStyleExample(value: InsertStyleExample): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(styleExamples).values(value);
+}
+
+export async function insertRejection(value: InsertRejection): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(rejections).values(value);
+}
+
+export async function listStyleExamples(limit = 500): Promise<StyleExample[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(styleExamples).orderBy(desc(styleExamples.id)).limit(limit);
+}
+
+export async function listRejections(limit = 500): Promise<Rejection[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rejections).orderBy(desc(rejections.id)).limit(limit);
+}
+
+export async function listKnowledge(): Promise<KnowledgeChunk[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(knowledgeChunks).orderBy(desc(knowledgeChunks.id));
+}
+
+export async function upsertKnowledgeChunk(value: InsertKnowledgeChunk): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(knowledgeChunks).values(value);
+}

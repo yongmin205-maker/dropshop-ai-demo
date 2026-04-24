@@ -139,3 +139,81 @@ export const mockPriceList = mysqlTable("mockPriceList", {
 
 export type MockPrice = typeof mockPriceList.$inferSelect;
 export type InsertMockPrice = typeof mockPriceList.$inferInsert;
+
+/* ============================================================
+ * Human-in-the-Loop + RAG tables
+ * ============================================================ */
+
+/**
+ * Drafts are AI-generated replies awaiting human approval.
+ * One inbound message can have multiple drafts (original + regenerations after Reject).
+ */
+export const drafts = mysqlTable("drafts", {
+  id: int("id").autoincrement().primaryKey(),
+  conversationId: int("conversationId").notNull(),
+  inboundMessageId: int("inboundMessageId").notNull(),
+  intent: varchar("intent", { length: 64 }).notNull(),
+  body: text("body").notNull(),
+  revision: int("revision").default(1).notNull(), // 1 = original, 2+ = regenerated after rejection
+  status: mysqlEnum("status", ["pending_approval", "approved", "rejected", "superseded"])
+    .default("pending_approval")
+    .notNull(),
+  ragContext: json("ragContext"), // { styleExamples: [], rejectionLessons: [], knowledge: [] }
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Draft = typeof drafts.$inferSelect;
+export type InsertDraft = typeof drafts.$inferInsert;
+
+/**
+ * Tier 2 (RAG): Approved (customer message ↔ AI reply) pairs.
+ * Used as few-shot style examples for future drafts.
+ */
+export const styleExamples = mysqlTable("styleExamples", {
+  id: int("id").autoincrement().primaryKey(),
+  draftId: int("draftId").notNull(),
+  intent: varchar("intent", { length: 64 }).notNull(),
+  customerBody: text("customerBody").notNull(),
+  approvedReply: text("approvedReply").notNull(),
+  embedding: json("embedding").notNull(), // number[] (cosine sim)
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type StyleExample = typeof styleExamples.$inferSelect;
+export type InsertStyleExample = typeof styleExamples.$inferInsert;
+
+/**
+ * Tier 3 (RAG): Rejected drafts + manager reason.
+ * Used as "don't do this" lessons injected into future prompts.
+ */
+export const rejections = mysqlTable("rejections", {
+  id: int("id").autoincrement().primaryKey(),
+  draftId: int("draftId").notNull(),
+  intent: varchar("intent", { length: 64 }).notNull(),
+  customerBody: text("customerBody").notNull(),
+  rejectedReply: text("rejectedReply").notNull(),
+  reason: text("reason").notNull(),
+  embedding: json("embedding").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Rejection = typeof rejections.$inferSelect;
+export type InsertRejection = typeof rejections.$inferInsert;
+
+/**
+ * Tier 1 (RAG): Editable knowledge facts (price list, membership policy, hours, pickup rules).
+ * Manager can edit these directly; seeded on first run.
+ */
+export const knowledgeChunks = mysqlTable("knowledgeChunks", {
+  id: int("id").autoincrement().primaryKey(),
+  topic: varchar("topic", { length: 64 }).notNull(), // pricing / membership / hours / policy / pickup
+  title: varchar("title", { length: 256 }).notNull(),
+  body: text("body").notNull(),
+  embedding: json("embedding").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type KnowledgeChunk = typeof knowledgeChunks.$inferSelect;
+export type InsertKnowledgeChunk = typeof knowledgeChunks.$inferInsert;

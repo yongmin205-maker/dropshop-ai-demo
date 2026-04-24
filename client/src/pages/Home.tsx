@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { PRESET_SCENARIOS, type PresetScenario } from "@shared/scenarios";
 import { format } from "date-fns";
@@ -13,13 +14,16 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Building2,
+  Check,
   CheckCircle2,
   CircleDot,
   Loader2,
   Phone,
   Send,
   Sparkles,
+  ThumbsDown,
   Wifi,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -216,18 +220,29 @@ export default function Home() {
 
         {/* Right: AI log + escalations */}
         <section className="lg:col-span-4 space-y-4">
-          <Tabs defaultValue="log">
+          <Tabs defaultValue="approvals">
             <TabsList className="bg-white/[0.04] border border-white/10">
-              <TabsTrigger value="log">AI Processing Log</TabsTrigger>
+              <TabsTrigger value="approvals">
+                Approvals
+                <PendingDraftsBadge />
+              </TabsTrigger>
+              <TabsTrigger value="log">AI Log</TabsTrigger>
               <TabsTrigger value="escalations">
-                Critical Handoff
+                Critical
                 {(escalations.data?.length ?? 0) > 0 && (
                   <Badge className="ml-2 bg-rose-500/20 text-rose-300 border-rose-500/30">
                     {escalations.data?.length}
                   </Badge>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="rag">RAG Memory</TabsTrigger>
             </TabsList>
+            <TabsContent value="approvals" className="mt-3">
+              <ApprovalQueue />
+            </TabsContent>
+            <TabsContent value="rag" className="mt-3">
+              <RagMemoryPanel />
+            </TabsContent>
             <TabsContent value="log" className="mt-3">
               <ProcessingLogPanel logs={sortedLogs} pending={pendingSteps} isSending={isSending} />
             </TabsContent>
@@ -669,6 +684,297 @@ function EscalationsPanel({
             ))}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/* ============================================================
+ * Human-in-the-Loop & RAG components
+ * ============================================================ */
+
+function PendingDraftsBadge() {
+  const pending = trpc.drafts.listPending.useQuery(undefined, {
+    refetchInterval: 2500,
+  });
+  const count = pending.data?.length ?? 0;
+  if (count === 0) return null;
+  return (
+    <Badge className="ml-2 bg-amber-300/20 text-amber-200 border-amber-300/30">
+      {count}
+    </Badge>
+  );
+}
+
+function ApprovalQueue() {
+  const utils = trpc.useUtils();
+  const pending = trpc.drafts.listPending.useQuery(undefined, {
+    refetchInterval: 2500,
+  });
+  const conversations = trpc.conversations.list.useQuery();
+
+  const [rejectDraftId, setRejectDraftId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const approve = trpc.drafts.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Reply approved & sent");
+      utils.drafts.listPending.invalidate();
+      utils.conversations.list.invalidate();
+      utils.conversations.messages.invalidate();
+      utils.conversations.logs.invalidate();
+      utils.rag.styleExamples.invalidate();
+    },
+    onError: (err) => toast.error("Approve failed", { description: err.message }),
+  });
+
+  const reject = trpc.drafts.reject.useMutation({
+    onSuccess: () => {
+      toast.success("Draft rejected — regenerating with feedback");
+      setRejectDraftId(null);
+      setRejectReason("");
+      utils.drafts.listPending.invalidate();
+      utils.conversations.logs.invalidate();
+      utils.rag.rejections.invalidate();
+    },
+    onError: (err) => toast.error("Reject failed", { description: err.message }),
+  });
+
+  const drafts = pending.data ?? [];
+  const convById = useMemo(() => {
+    const map = new Map<number, { customerName: string | null; phone: string }>();
+    for (const c of conversations.data ?? []) {
+      map.set(c.id, { customerName: c.customerName, phone: c.phone });
+    }
+    return map;
+  }, [conversations.data]);
+
+  return (
+    <Card className="bg-white/[0.03] border-white/10">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-display text-lg">
+          <ThumbsDown className="size-4 text-amber-300 rotate-180" />
+          Approval Queue
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          AI drafts await your <span className="text-emerald-300">Approve</span> or <span className="text-rose-300">Reject</span>. Rejections teach the model.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <ScrollArea className="h-[560px] pr-2">
+          {drafts.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-12">
+              No drafts pending. Send a message in the simulator to generate one.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {drafts.map((d) => {
+                const conv = convById.get(d.conversationId);
+                const isRejecting = rejectDraftId === d.id;
+                return (
+                  <div
+                    key={d.id}
+                    className="rounded-lg border border-amber-300/20 bg-amber-300/[0.04] p-3"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${intentTone(d.intent)}`}
+                        >
+                          {d.intent}
+                        </Badge>
+                        {d.revision && d.revision > 1 && (
+                          <Badge variant="outline" className="text-[10px] bg-white/5 border-white/10 text-muted-foreground">
+                            rev {d.revision}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {format(new Date(d.createdAt), "HH:mm:ss")}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mb-1">
+                      To: <span className="text-foreground/80">{conv?.customerName ?? "Unknown"}</span>
+                      <span className="ml-2 tabular-nums">{conv?.phone}</span>
+                    </div>
+                    <div className="rounded-md bg-black/20 border border-white/5 p-2.5 text-sm text-foreground/90 whitespace-pre-wrap">
+                      {d.body}
+                    </div>
+
+                    {isRejecting ? (
+                      <div className="mt-2 space-y-2">
+                        <Textarea
+                          value={rejectReason}
+                          onChange={(e) => setRejectReason(e.target.value)}
+                          placeholder="Why is this draft wrong? (e.g., 'too formal', 'wrong price — should be $35, not $40', 'never promise same-day on weekends')"
+                          className="bg-white/[0.03] border-white/10 text-sm min-h-[72px]"
+                        />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            className="bg-rose-500/20 text-rose-100 border-rose-500/30 hover:bg-rose-500/30 border"
+                            disabled={!rejectReason.trim() || reject.isPending}
+                            onClick={() =>
+                              reject.mutate({ draftId: d.id, reason: rejectReason.trim() })
+                            }
+                          >
+                            {reject.isPending ? <Loader2 className="size-3.5 mr-1 animate-spin" /> : <ThumbsDown className="size-3.5 mr-1" />}
+                            Reject & teach
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-white/[0.03] border-white/10"
+                            onClick={() => {
+                              setRejectDraftId(null);
+                              setRejectReason("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          className="bg-emerald-500/20 text-emerald-100 border-emerald-500/30 hover:bg-emerald-500/30 border"
+                          disabled={approve.isPending}
+                          onClick={() => approve.mutate({ draftId: d.id })}
+                        >
+                          {approve.isPending ? <Loader2 className="size-3.5 mr-1 animate-spin" /> : <Check className="size-3.5 mr-1" />}
+                          Approve & send
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-white/[0.03] border-white/10 hover:border-rose-400/30 hover:bg-rose-500/10"
+                          onClick={() => {
+                            setRejectDraftId(d.id);
+                            setRejectReason("");
+                          }}
+                        >
+                          <X className="size-3.5 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RagMemoryPanel() {
+  const styleExamples = trpc.rag.styleExamples.useQuery();
+  const rejections = trpc.rag.rejections.useQuery();
+  const knowledge = trpc.rag.knowledge.useQuery();
+
+  return (
+    <Card className="bg-white/[0.03] border-white/10">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-display text-lg">
+          <Sparkles className="size-4 text-amber-300" />
+          RAG Memory — 3 Tiers
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Knowledge · Approved replies · Rejection lessons. These are retrieved & injected into every new draft.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="style">
+          <TabsList className="bg-white/[0.04] border border-white/10">
+            <TabsTrigger value="style">
+              Approved
+              <Badge className="ml-2 bg-emerald-500/20 text-emerald-200 border-emerald-500/30">
+                {styleExamples.data?.length ?? 0}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="rejections">
+              Rejections
+              <Badge className="ml-2 bg-rose-500/20 text-rose-200 border-rose-500/30">
+                {rejections.data?.length ?? 0}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="knowledge">
+              Knowledge
+              <Badge className="ml-2 bg-sky-500/20 text-sky-200 border-sky-500/30">
+                {knowledge.data?.length ?? 0}
+              </Badge>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="style" className="mt-3">
+            <ScrollArea className="h-[480px] pr-2">
+              {(styleExamples.data ?? []).length === 0 ? (
+                <div className="text-sm text-muted-foreground text-center py-12">
+                  No approved replies yet. Approve a draft and it appears here.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {(styleExamples.data ?? []).map((ex) => (
+                    <div key={ex.id} className="rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] p-3 space-y-2">
+                      <Badge variant="outline" className={`text-[10px] ${intentTone(ex.intent)}`}>{ex.intent}</Badge>
+                      <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
+                      <div className="text-sm text-foreground/90">{ex.customerBody}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-emerald-300/80">Approved DropShop reply</div>
+                      <div className="text-sm text-foreground/90 whitespace-pre-wrap">{ex.approvedReply}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="rejections" className="mt-3">
+            <ScrollArea className="h-[480px] pr-2">
+              {(rejections.data ?? []).length === 0 ? (
+                <div className="text-sm text-muted-foreground text-center py-12">
+                  No rejections yet. Reject a draft with a reason and the AI will learn from it.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {(rejections.data ?? []).map((r) => (
+                    <div key={r.id} className="rounded-lg border border-rose-500/15 bg-rose-500/[0.04] p-3 space-y-2">
+                      <Badge variant="outline" className={`text-[10px] ${intentTone(r.intent)}`}>{r.intent}</Badge>
+                      <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
+                      <div className="text-sm text-foreground/90">{r.customerBody}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-rose-300/80">Rejected draft</div>
+                      <div className="text-sm text-foreground/90 whitespace-pre-wrap line-through opacity-60">{r.rejectedReply}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-amber-300/80">Manager reason</div>
+                      <div className="text-sm text-amber-100/90">{r.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="knowledge" className="mt-3">
+            <ScrollArea className="h-[480px] pr-2">
+              <div className="space-y-3">
+                {(knowledge.data ?? []).map((k) => (
+                  <div key={k.id} className="rounded-lg border border-sky-500/15 bg-sky-500/[0.04] p-3 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-[10px] bg-sky-500/10 text-sky-200 border-sky-500/30">
+                        {k.topic}
+                      </Badge>
+                      <div className="text-sm font-medium">{k.title}</div>
+                    </div>
+                    <div className="text-sm text-foreground/80">{k.body}</div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );
