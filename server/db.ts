@@ -308,3 +308,19 @@ export async function upsertKnowledgeChunk(value: InsertKnowledgeChunk): Promise
   if (!db) return;
   await db.insert(knowledgeChunks).values(value);
 }
+
+
+/* ---- Demo reset: wipe all conversation/draft data (NOT users / NOT knowledge) ---- */
+export async function resetDemoData(): Promise<{ ok: boolean }> {
+  const db = await getDb();
+  if (!db) return { ok: false };
+  // Order matters: drop child rows before parents to respect FKs.
+  await db.delete(rejections);
+  await db.delete(styleExamples);
+  await db.delete(drafts);
+  await db.delete(processingLogs);
+  await db.delete(escalations);
+  await db.delete(messages);
+  await db.delete(conversations);
+  return { ok: true };
+}

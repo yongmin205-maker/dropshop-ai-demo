@@ -19,6 +19,7 @@ import {
   CircleDot,
   Loader2,
   Phone,
+  RotateCcw,
   Send,
   Sparkles,
   ThumbsDown,
@@ -156,6 +157,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <LiveModeBadge live={!!config.data?.liveMode} phone={config.data?.twilioPhone ?? null} />
+            <ResetDemoButton />
             <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-white/[0.04] border-white/10 hover:bg-white/[0.08]">
               <ArrowUpRight className="size-4 mr-1.5" />
               Pitch deck
@@ -570,11 +572,15 @@ function StoreInbox({
                   </div>
                 )}
                 {messages.map((m) => {
+                  // Manager POV: the customer is the OTHER person, so customer
+                  // (inbound) is on the LEFT in gray; DropShop (outbound) is
+                  // on the RIGHT in blue — mirroring how a real store inbox
+                  // (Front, Nextiva, OpenPhone, Slack DMs) renders threads.
                   const isCustomer = m.direction === "inbound";
                   return (
-                    <div key={m.id} className={`flex ${isCustomer ? "justify-end" : "justify-start"}`}>
+                    <div key={m.id} className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}>
                       <div className="max-w-[78%]">
-                        <div className={`text-[10px] uppercase tracking-widest mb-1 ${isCustomer ? "text-sky-300/80 text-right" : "text-muted-foreground"}`}>
+                        <div className={`text-[10px] uppercase tracking-widest mb-1 ${isCustomer ? "text-muted-foreground" : "text-sky-300/80 text-right"}`}>
                           {isCustomer ? "Customer" : m.sender === "ai" ? "DropShop AI" : "Manager"}
                           {m.intent && (
                             <span className={`ml-2 inline-block px-1.5 py-0.5 rounded border text-[9px] ${intentTone(m.intent)}`}>
@@ -585,13 +591,13 @@ function StoreInbox({
                         <div
                           className={
                             isCustomer
-                              ? "rounded-2xl rounded-br-md bg-blue-500 text-white px-3.5 py-2 text-sm whitespace-pre-wrap"
-                              : "rounded-2xl rounded-bl-md bg-zinc-700/60 text-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap"
+                              ? "rounded-2xl rounded-bl-md bg-zinc-700/60 text-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap"
+                              : "rounded-2xl rounded-br-md bg-blue-500 text-white px-3.5 py-2 text-sm whitespace-pre-wrap"
                           }
                         >
                           {m.body}
                         </div>
-                        <div className={`text-[10px] text-muted-foreground mt-1 ${isCustomer ? "text-right" : ""}`}>
+                        <div className={`text-[10px] text-muted-foreground mt-1 ${isCustomer ? "" : "text-right"}`}>
                           {format(new Date(m.createdAt), "HH:mm:ss")}
                         </div>
                       </div>
@@ -1141,5 +1147,39 @@ function TopRejectReasons({
         })}
       </div>
     </div>
+  );
+}
+
+
+function ResetDemoButton() {
+  const utils = trpc.useUtils();
+  const reset = trpc.demo.reset.useMutation({
+    onSuccess: () => {
+      utils.conversations.list.invalidate();
+      utils.conversations.messages.invalidate();
+      utils.drafts.listPending.invalidate();
+      utils.rag.styleExamples.invalidate();
+      utils.rag.rejections.invalidate();
+      utils.escalations.list.invalidate();
+      toast.success("Demo reset — all conversations cleared");
+    },
+    onError: (e) => toast.error(`Reset failed: ${e.message}`),
+  });
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="bg-white/[0.04] border-white/10 hover:bg-white/[0.08]"
+      onClick={() => {
+        if (confirm("Reset demo? This will delete all conversations, drafts, rejections, and AI logs. (Knowledge base is preserved.)")) {
+          reset.mutate();
+        }
+      }}
+      disabled={reset.isPending}
+    >
+      <RotateCcw className="size-4 mr-1.5" />
+      {reset.isPending ? "Resetting…" : "Reset demo"}
+    </Button>
   );
 }

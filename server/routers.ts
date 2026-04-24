@@ -23,6 +23,7 @@ import {
   listPendingDrafts,
   listRejections,
   listStyleExamples,
+  resetDemoData,
   resolveEscalation,
   updateConversationIntent,
   updateDraftStatus,
@@ -283,6 +284,13 @@ export const appRouter = router({
         });
         return { ok: true };
       }),
+  }),
+
+  /* ---------- Demo controls ---------- */
+  demo: router({
+    reset: publicProcedure.mutation(async () => {
+      return resetDemoData();
+    }),
   }),
 
   /* ---------- Simulator inbound message ---------- */

@@ -49,3 +49,10 @@
 - [x] RAG Memory tab: "Top reject reasons" widget with bar chart
 - [x] Mobile-responsive layout: 3-pane collapses to tabs on `<lg`
 - [x] Vitest: REJECT_CATEGORIES contract + regen prompt includes category tag (5 new tests, 23 total passing)
+
+## Phase 4 — UI orientation polish (complete)
+
+- [x] Flip StoreInbox bubbles to manager POV: customer (inbound) = LEFT/gray, DropShop (outbound) = RIGHT/blue
+- [x] Add `Reset demo` button in header (clears conversations/drafts/rejections, preserves knowledge base) — fixes accumulated duplicate fixture data
+- [x] Existing 23 vitest still pass after refactor
+- [x] Save checkpoint
