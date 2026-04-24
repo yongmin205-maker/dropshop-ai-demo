@@ -239,16 +239,16 @@ export default function Home() {
               </TabsTrigger>
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
             </TabsList>
-            <TabsContent value="approvals" className="mt-3">
+            <TabsContent forceMount value="approvals" className="mt-3 data-[state=inactive]:hidden">
               <ApprovalQueue />
             </TabsContent>
-            <TabsContent value="rag" className="mt-3">
+            <TabsContent forceMount value="rag" className="mt-3 data-[state=inactive]:hidden">
               <RagMemoryPanel />
             </TabsContent>
-            <TabsContent value="log" className="mt-3">
+            <TabsContent forceMount value="log" className="mt-3 data-[state=inactive]:hidden">
               <ProcessingLogPanel logs={sortedLogs} pending={pendingSteps} isSending={isSending} />
             </TabsContent>
-            <TabsContent value="escalations" className="mt-3">
+            <TabsContent forceMount value="escalations" className="mt-3 data-[state=inactive]:hidden">
               <EscalationsPanel
                 escalations={escalations.data ?? []}
                 onResolve={(id) => {
@@ -1015,7 +1015,7 @@ function RagMemoryPanel() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="style" className="mt-3">
+          <TabsContent forceMount value="style" className="mt-3 data-[state=inactive]:hidden">
             <ScrollArea className="h-[480px] pr-2">
               {(styleExamples.data ?? []).length === 0 ? (
                 <div className="text-sm text-muted-foreground text-center py-12">
@@ -1037,7 +1037,7 @@ function RagMemoryPanel() {
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="rejections" className="mt-3">
+          <TabsContent forceMount value="rejections" className="mt-3 data-[state=inactive]:hidden">
             <ScrollArea className="h-[480px] pr-2">
               {(rejections.data ?? []).length === 0 ? (
                 <div className="text-sm text-muted-foreground text-center py-12">
@@ -1072,7 +1072,7 @@ function RagMemoryPanel() {
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="knowledge" className="mt-3">
+          <TabsContent forceMount value="knowledge" className="mt-3 data-[state=inactive]:hidden">
             <ScrollArea className="h-[480px] pr-2">
               <div className="space-y-3">
                 {(knowledge.data ?? []).map((k) => (
