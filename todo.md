@@ -39,3 +39,13 @@
 - [x] UI: RAG Memory tab (Approved / Rejections / Knowledge sub-tabs) showing the learning corpus grow live
 - [x] UI: Auto-send left OFF by default; controllable via `DROPSHOP_AUTO_SEND=1` env flag
 - [x] Vitest: 5 new tests — draft does not auto-send, approval records style example, rejection records reason + regenerates, topK ranks same-intent higher, step vocabulary contract
+
+## Phase 3 — UX polish (complete)
+
+- [x] Fix iMessage bubble alignment in PhoneSimulator (customer = right/blue, DropShop = left/grey)
+- [x] Add `category` (enum) column to `rejections` table
+- [x] Reject Reason dropdown UI: 8 preset categories + Other (free text)
+- [x] Surface category in regenerated draft prompt (not just freeform reason)
+- [x] RAG Memory tab: "Top reject reasons" widget with bar chart
+- [x] Mobile-responsive layout: 3-pane collapses to tabs on `<lg`
+- [x] Vitest: REJECT_CATEGORIES contract + regen prompt includes category tag (5 new tests, 23 total passing)

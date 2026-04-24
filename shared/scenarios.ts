@@ -57,3 +57,27 @@ export const PRESET_SCENARIOS: PresetScenario[] = [
       "Building superintendent reports a possible theft with CCTV evidence — must escalate.",
   },
 ];
+
+
+export const REJECT_CATEGORIES = [
+  "wrong_information",
+  "tone_too_formal",
+  "tone_too_casual",
+  "too_long",
+  "too_short",
+  "missing_context",
+  "should_escalate",
+  "other",
+] as const;
+export type RejectCategory = (typeof REJECT_CATEGORIES)[number];
+
+export const REJECT_CATEGORY_LABELS: Record<RejectCategory, string> = {
+  wrong_information: "Wrong Information",
+  tone_too_formal: "Tone Too Formal",
+  tone_too_casual: "Tone Too Casual",
+  too_long: "Too Long",
+  too_short: "Too Short",
+  missing_context: "Missing Context",
+  should_escalate: "Should Escalate",
+  other: "Other",
+};

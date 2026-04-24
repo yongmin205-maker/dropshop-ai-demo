@@ -1,0 +1,1 @@
+ALTER TABLE `rejections` ADD `category` enum('wrong_information','tone_too_formal','tone_too_casual','too_long','too_short','missing_context','should_escalate','other') DEFAULT 'other' NOT NULL;

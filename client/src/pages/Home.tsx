@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { PRESET_SCENARIOS, type PresetScenario } from "@shared/scenarios";
+import { PRESET_SCENARIOS, REJECT_CATEGORIES, REJECT_CATEGORY_LABELS, type PresetScenario, type RejectCategory } from "@shared/scenarios";
 import { format } from "date-fns";
 import {
   AlertTriangle,
@@ -142,7 +142,7 @@ export default function Home() {
     <div className="min-h-screen bg-background text-foreground grain">
       {/* Header */}
       <header className="border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
-        <div className="max-w-[1600px] mx-auto px-6 py-5 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="size-10 rounded-full bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
               <span className="font-display text-zinc-900 font-bold text-lg">D</span>
@@ -154,9 +154,9 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <LiveModeBadge live={!!config.data?.liveMode} phone={config.data?.twilioPhone ?? null} />
-            <Button variant="outline" size="sm" className="bg-white/[0.04] border-white/10 hover:bg-white/[0.08]">
+            <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-white/[0.04] border-white/10 hover:bg-white/[0.08]">
               <ArrowUpRight className="size-4 mr-1.5" />
               Pitch deck
             </Button>
@@ -166,7 +166,7 @@ export default function Home() {
 
       {/* Preset scenarios bar */}
       <div className="border-b border-white/5 bg-white/[0.015]">
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center gap-3 overflow-x-auto">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 overflow-x-auto no-scrollbar">
           <span className="text-xs text-muted-foreground uppercase tracking-widest shrink-0 mr-1">
             Demo scenarios
           </span>
@@ -191,10 +191,10 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Split-screen workspace */}
-      <main className="max-w-[1600px] mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Split-screen workspace (desktop) */}
+      <main className="hidden lg:grid max-w-[1600px] mx-auto px-6 py-6 grid-cols-12 gap-6">
         {/* Left: Customer phone simulator */}
-        <section className="lg:col-span-3">
+        <section className="col-span-3">
           <PhoneSimulator
             scenario={activeScenario}
             onScenarioChange={setActiveScenario}
@@ -208,7 +208,7 @@ export default function Home() {
         </section>
 
         {/* Center: Store inbox */}
-        <section className="lg:col-span-5 space-y-4">
+        <section className="col-span-5 space-y-4">
           <StoreInbox
             conversations={conversations.data ?? []}
             activeId={activeConvId}
@@ -219,7 +219,7 @@ export default function Home() {
         </section>
 
         {/* Right: AI log + escalations */}
-        <section className="lg:col-span-4 space-y-4">
+        <section className="col-span-4 space-y-4">
           <Tabs defaultValue="approvals">
             <TabsList className="bg-white/[0.04] border border-white/10">
               <TabsTrigger value="approvals">
@@ -259,6 +259,60 @@ export default function Home() {
             </TabsContent>
           </Tabs>
         </section>
+      </main>
+
+      {/* Mobile workspace (tabs) */}
+      <main className="lg:hidden max-w-[1600px] mx-auto px-3 py-4">
+        <Tabs defaultValue="simulator" className="w-full">
+          <TabsList className="bg-white/[0.04] border border-white/10 w-full grid grid-cols-4">
+            <TabsTrigger value="simulator" className="text-xs">Simulator</TabsTrigger>
+            <TabsTrigger value="inbox" className="text-xs">Inbox</TabsTrigger>
+            <TabsTrigger value="approvals" className="text-xs">
+              Approvals
+              <PendingDraftsBadge />
+            </TabsTrigger>
+            <TabsTrigger value="log" className="text-xs">Log</TabsTrigger>
+          </TabsList>
+          <TabsContent value="simulator" className="mt-3">
+            <PhoneSimulator
+              scenario={activeScenario}
+              onScenarioChange={setActiveScenario}
+              messages={sortedMessages}
+              draft={draft}
+              onDraftChange={setDraft}
+              onSend={() => send(draft)}
+              isSending={isSending}
+              scrollRef={phoneScrollRef}
+            />
+          </TabsContent>
+          <TabsContent value="inbox" className="mt-3">
+            <StoreInbox
+              conversations={conversations.data ?? []}
+              activeId={activeConvId}
+              onSelect={setActiveConvId}
+              messages={sortedMessages}
+              activeScenario={activeScenario}
+            />
+          </TabsContent>
+          <TabsContent value="approvals" className="mt-3">
+            <ApprovalQueue />
+          </TabsContent>
+          <TabsContent value="log" className="mt-3 space-y-4">
+            <ProcessingLogPanel logs={sortedLogs} pending={pendingSteps} isSending={isSending} />
+            {(escalations.data?.length ?? 0) > 0 && (
+              <EscalationsPanel
+                escalations={escalations.data ?? []}
+                onResolve={(id) => {
+                  utils.client.escalations.resolve.mutate({ id }).then(() => {
+                    utils.escalations.list.invalidate();
+                    toast.success("Escalation resolved");
+                  });
+                }}
+              />
+            )}
+            <RagMemoryPanel />
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Footer */}
@@ -515,26 +569,35 @@ function StoreInbox({
                     Loading conversation…
                   </div>
                 )}
-                {messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.direction === "inbound" ? "justify-start" : "justify-end"}`}>
-                    <div className="max-w-[78%]">
-                      <div className={`text-[10px] uppercase tracking-widest mb-1 ${m.direction === "inbound" ? "text-muted-foreground" : "text-amber-300/80 text-right"}`}>
-                        {m.direction === "inbound" ? "Customer" : m.sender === "ai" ? "DropShop AI" : "Manager"}
-                        {m.intent && (
-                          <span className={`ml-2 inline-block px-1.5 py-0.5 rounded border text-[9px] ${intentTone(m.intent)}`}>
-                            {m.intent}
-                          </span>
-                        )}
-                      </div>
-                      <div className={m.direction === "inbound" ? "bubble-customer whitespace-pre-wrap" : "bubble-business whitespace-pre-wrap"}>
-                        {m.body}
-                      </div>
-                      <div className={`text-[10px] text-muted-foreground mt-1 ${m.direction === "inbound" ? "" : "text-right"}`}>
-                        {format(new Date(m.createdAt), "HH:mm:ss")}
+                {messages.map((m) => {
+                  const isCustomer = m.direction === "inbound";
+                  return (
+                    <div key={m.id} className={`flex ${isCustomer ? "justify-end" : "justify-start"}`}>
+                      <div className="max-w-[78%]">
+                        <div className={`text-[10px] uppercase tracking-widest mb-1 ${isCustomer ? "text-sky-300/80 text-right" : "text-muted-foreground"}`}>
+                          {isCustomer ? "Customer" : m.sender === "ai" ? "DropShop AI" : "Manager"}
+                          {m.intent && (
+                            <span className={`ml-2 inline-block px-1.5 py-0.5 rounded border text-[9px] ${intentTone(m.intent)}`}>
+                              {m.intent}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className={
+                            isCustomer
+                              ? "rounded-2xl rounded-br-md bg-blue-500 text-white px-3.5 py-2 text-sm whitespace-pre-wrap"
+                              : "rounded-2xl rounded-bl-md bg-zinc-700/60 text-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap"
+                          }
+                        >
+                          {m.body}
+                        </div>
+                        <div className={`text-[10px] text-muted-foreground mt-1 ${isCustomer ? "text-right" : ""}`}>
+                          {format(new Date(m.createdAt), "HH:mm:ss")}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </ScrollArea>
           </div>
@@ -716,6 +779,7 @@ function ApprovalQueue() {
 
   const [rejectDraftId, setRejectDraftId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [rejectCategory, setRejectCategory] = useState<RejectCategory>("tone_too_formal");
 
   const approve = trpc.drafts.approve.useMutation({
     onSuccess: () => {
@@ -734,6 +798,7 @@ function ApprovalQueue() {
       toast.success("Draft rejected — regenerating with feedback");
       setRejectDraftId(null);
       setRejectReason("");
+      setRejectCategory("tone_too_formal");
       utils.drafts.listPending.invalidate();
       utils.conversations.logs.invalidate();
       utils.rag.rejections.invalidate();
@@ -805,19 +870,52 @@ function ApprovalQueue() {
 
                     {isRejecting ? (
                       <div className="mt-2 space-y-2">
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                            Reason category
+                          </label>
+                          <Select
+                            value={rejectCategory}
+                            onValueChange={(v) => setRejectCategory(v as RejectCategory)}
+                          >
+                            <SelectTrigger className="mt-1 bg-white/[0.03] border-white/10 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {REJECT_CATEGORIES.map((c) => (
+                                <SelectItem key={c} value={c}>
+                                  {REJECT_CATEGORY_LABELS[c]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                         <Textarea
                           value={rejectReason}
                           onChange={(e) => setRejectReason(e.target.value)}
-                          placeholder="Why is this draft wrong? (e.g., 'too formal', 'wrong price — should be $35, not $40', 'never promise same-day on weekends')"
+                          placeholder={
+                            rejectCategory === "other"
+                              ? "Tell the AI exactly what's wrong (required)…"
+                              : "Optional: add specifics (e.g., 'price should be $35, not $40')"
+                          }
                           className="bg-white/[0.03] border-white/10 text-sm min-h-[72px]"
                         />
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
                             className="bg-rose-500/20 text-rose-100 border-rose-500/30 hover:bg-rose-500/30 border"
-                            disabled={!rejectReason.trim() || reject.isPending}
+                            disabled={
+                              reject.isPending ||
+                              (rejectCategory === "other" && !rejectReason.trim())
+                            }
                             onClick={() =>
-                              reject.mutate({ draftId: d.id, reason: rejectReason.trim() })
+                              reject.mutate({
+                                draftId: d.id,
+                                category: rejectCategory,
+                                reason:
+                                  rejectReason.trim() ||
+                                  REJECT_CATEGORY_LABELS[rejectCategory],
+                              })
                             }
                           >
                             {reject.isPending ? <Loader2 className="size-3.5 mr-1 animate-spin" /> : <ThumbsDown className="size-3.5 mr-1" />}
@@ -941,17 +1039,28 @@ function RagMemoryPanel() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {(rejections.data ?? []).map((r) => (
-                    <div key={r.id} className="rounded-lg border border-rose-500/15 bg-rose-500/[0.04] p-3 space-y-2">
-                      <Badge variant="outline" className={`text-[10px] ${intentTone(r.intent)}`}>{r.intent}</Badge>
-                      <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
-                      <div className="text-sm text-foreground/90">{r.customerBody}</div>
-                      <div className="text-[10px] uppercase tracking-widest text-rose-300/80">Rejected draft</div>
-                      <div className="text-sm text-foreground/90 whitespace-pre-wrap line-through opacity-60">{r.rejectedReply}</div>
-                      <div className="text-[10px] uppercase tracking-widest text-amber-300/80">Manager reason</div>
-                      <div className="text-sm text-amber-100/90">{r.reason}</div>
-                    </div>
-                  ))}
+                  <TopRejectReasons rejections={rejections.data ?? []} />
+                  {(rejections.data ?? []).map((r) => {
+                    const cat = ((r as unknown) as { category?: RejectCategory | null }).category ?? null;
+                    return (
+                      <div key={r.id} className="rounded-lg border border-rose-500/15 bg-rose-500/[0.04] p-3 space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className={`text-[10px] ${intentTone(r.intent)}`}>{r.intent}</Badge>
+                          {cat && (
+                            <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-200 border-rose-500/30">
+                              {REJECT_CATEGORY_LABELS[cat] ?? cat}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
+                        <div className="text-sm text-foreground/90">{r.customerBody}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-rose-300/80">Rejected draft</div>
+                        <div className="text-sm text-foreground/90 whitespace-pre-wrap line-through opacity-60">{r.rejectedReply}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-amber-300/80">Manager reason</div>
+                        <div className="text-sm text-amber-100/90">{r.reason}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
@@ -977,5 +1086,60 @@ function RagMemoryPanel() {
         </Tabs>
       </CardContent>
     </Card>
+  );
+}
+
+
+function TopRejectReasons({
+  rejections,
+}: {
+  rejections: { category?: string | null }[];
+}) {
+  const counts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of rejections) {
+      const c = (r.category as string | undefined) || "other";
+      map.set(c, (map.get(c) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+  }, [rejections]);
+
+  if (counts.length === 0) return null;
+  const total = rejections.length;
+
+  return (
+    <div className="rounded-lg border border-amber-300/15 bg-gradient-to-br from-amber-300/[0.06] to-transparent p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-widest text-amber-200/90">
+          Top reject reasons
+        </div>
+        <div className="text-[10px] text-muted-foreground tabular-nums">
+          {total} total
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {counts.map(([cat, n]) => {
+          const pct = Math.round((n / Math.max(total, 1)) * 100);
+          const label =
+            REJECT_CATEGORY_LABELS[cat as RejectCategory] ?? cat;
+          return (
+            <div key={cat} className="flex items-center gap-2">
+              <div className="text-xs w-32 shrink-0 text-foreground/80">
+                {label}
+              </div>
+              <div className="flex-1 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                <div
+                  className="h-full bg-amber-300/70"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <div className="text-[11px] tabular-nums text-muted-foreground w-8 text-right">
+                {n}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

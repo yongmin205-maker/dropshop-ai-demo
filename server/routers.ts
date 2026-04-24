@@ -159,6 +159,18 @@ export const appRouter = router({
       .input(
         z.object({
           draftId: z.number(),
+          category: z
+            .enum([
+              "wrong_information",
+              "tone_too_formal",
+              "tone_too_casual",
+              "too_long",
+              "too_short",
+              "missing_context",
+              "should_escalate",
+              "other",
+            ])
+            .default("other"),
           reason: z.string().min(1).max(1000),
         })
       )
@@ -192,6 +204,7 @@ export const appRouter = router({
           intent: draft.intent,
           customerBody: inbound.body,
           rejectedReply: draft.body,
+          category: input.category,
           reason: input.reason,
           embedding,
         });
@@ -212,7 +225,7 @@ export const appRouter = router({
         const nextResult = await draftAgentReply({
           phone,
           body: inbound.body,
-          managerRejectReason: input.reason,
+          managerRejectReason: `[${input.category}] ${input.reason}`,
           intentOverride: draft.intent as Intent,
         });
         if (nextResult.escalated || !nextResult.reply) {

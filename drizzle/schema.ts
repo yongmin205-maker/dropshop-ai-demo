@@ -187,12 +187,25 @@ export type InsertStyleExample = typeof styleExamples.$inferInsert;
  * Tier 3 (RAG): Rejected drafts + manager reason.
  * Used as "don't do this" lessons injected into future prompts.
  */
+export const REJECT_CATEGORIES = [
+  "wrong_information",
+  "tone_too_formal",
+  "tone_too_casual",
+  "too_long",
+  "too_short",
+  "missing_context",
+  "should_escalate",
+  "other",
+] as const;
+export type RejectCategory = (typeof REJECT_CATEGORIES)[number];
+
 export const rejections = mysqlTable("rejections", {
   id: int("id").autoincrement().primaryKey(),
   draftId: int("draftId").notNull(),
   intent: varchar("intent", { length: 64 }).notNull(),
   customerBody: text("customerBody").notNull(),
   rejectedReply: text("rejectedReply").notNull(),
+  category: mysqlEnum("category", REJECT_CATEGORIES).default("other").notNull(),
   reason: text("reason").notNull(),
   embedding: json("embedding").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
