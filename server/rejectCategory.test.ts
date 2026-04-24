@@ -149,6 +149,7 @@ vi.mock("./db", () => {
     ),
     getLatestPendingDraftForMessage: vi.fn(async () => null),
     listStyleExamples: vi.fn(async () => state.styleExamples),
+    listStyleExamplesByPhone: vi.fn(async () => []),
     listRejections: vi.fn(async () => state.rejections),
     listKnowledge: vi.fn(async () => []),
     upsertKnowledgeChunk: vi.fn(async () => {}),

@@ -115,6 +115,7 @@ vi.mock("./db", () => {
     getLatestPendingDraftForMessage: vi.fn(async () => null),
     // reads used by RAG
     listStyleExamples: vi.fn(async () => state.styleExamples),
+    listStyleExamplesByPhone: vi.fn(async () => []),
     listRejections: vi.fn(async () => state.rejections),
     listKnowledge: vi.fn(async () => [
       {

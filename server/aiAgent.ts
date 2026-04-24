@@ -11,6 +11,7 @@ import {
   listKnowledge,
   listRejections,
   listStyleExamples,
+  listStyleExamplesByPhone,
 } from "./db";
 import { embedText, topK } from "./embeddings";
 
@@ -160,11 +161,13 @@ function formatRagBlock(rag: RagContext): string {
 export async function retrieveRag(opts: {
   body: string;
   intent: Intent;
+  phone?: string;
 }): Promise<RagContext> {
-  const [allKnowledge, allExamples, allRejections] = await Promise.all([
+  const [allKnowledge, allExamples, allRejections, customerExamples] = await Promise.all([
     listKnowledge(),
     listStyleExamples(),
     listRejections(),
+    opts.phone ? listStyleExamplesByPhone(opts.phone) : Promise.resolve([]),
   ]);
   const queryEmb = await embedText(opts.body);
 
@@ -172,9 +175,15 @@ export async function retrieveRag(opts: {
     .filter((r) => r.score > 0)
     .map((r) => ({ title: r.title, body: r.body, score: r.score }));
 
-  // Prefer examples with the same intent; fall back to cross-intent if sparse
+  // Prefer this customer's own approved replies first (true personalization),
+  // then same-intent across all customers, then anything as last resort.
   const sameIntentExamples = allExamples.filter((e) => e.intent === opts.intent);
-  const examplePool = sameIntentExamples.length >= 2 ? sameIntentExamples : allExamples;
+  const examplePool =
+    customerExamples.length >= 1
+      ? customerExamples
+      : sameIntentExamples.length >= 2
+        ? sameIntentExamples
+        : allExamples;
   const eTop = topK(queryEmb, examplePool, 3)
     .filter((r) => r.score > 0)
     .map((r) => ({
@@ -341,7 +350,7 @@ export async function draftAgentReply(opts: {
   }
 
   // RAG retrieval
-  const rag = await retrieveRag({ body: opts.body, intent });
+  const rag = await retrieveRag({ body: opts.body, intent, phone: opts.phone });
   steps.push({
     step: "mock_api_called",
     label: `RAG retrieval → ${rag.knowledge.length} facts, ${rag.styleExamples.length} style examples, ${rag.rejectionLessons.length} rejection lessons`,

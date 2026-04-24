@@ -15,6 +15,7 @@ import {
   getLatestPendingDraftForMessage,
   getOpenEscalations,
   getOrCreateConversation,
+  getCustomerProfile,
   insertDraft,
   insertRejection,
   insertStyleExample,
@@ -80,7 +81,9 @@ export const appRouter = router({
 
   /* ---------- Human-in-the-Loop: drafts / approvals / rejections ---------- */
   drafts: router({
-    listPending: publicProcedure.query(() => listPendingDrafts()),
+    listPending: publicProcedure
+      .input(z.object({ conversationId: z.number().optional() }).optional())
+      .query(({ input }) => listPendingDrafts({ conversationId: input?.conversationId })),
 
     getForMessage: publicProcedure
       .input(z.object({ messageId: z.number() }))
@@ -291,6 +294,13 @@ export const appRouter = router({
     reset: publicProcedure.mutation(async () => {
       return resetDemoData();
     }),
+  }),
+
+  /* ---------- Customer profile (selected conversation) ---------- */
+  customers: router({
+    profile: publicProcedure
+      .input(z.object({ conversationId: z.number() }))
+      .query(({ input }) => getCustomerProfile(input.conversationId)),
   }),
 
   /* ---------- Simulator inbound message ---------- */

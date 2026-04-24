@@ -240,7 +240,12 @@ export default function Home() {
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
             </TabsList>
             <TabsContent forceMount value="approvals" className="mt-3 data-[state=inactive]:hidden">
-              <ApprovalQueue />
+              <ApprovalQueue
+                activeConversationId={activeConvId}
+                customerName={
+                  conversations.data?.find((c) => c.id === activeConvId)?.customerName ?? null
+                }
+              />
             </TabsContent>
             <TabsContent forceMount value="rag" className="mt-3 data-[state=inactive]:hidden">
               <RagMemoryPanel />
@@ -297,7 +302,12 @@ export default function Home() {
             />
           </TabsContent>
           <TabsContent value="approvals" className="mt-3">
-            <ApprovalQueue />
+            <ApprovalQueue
+              activeConversationId={activeConvId}
+              customerName={
+                conversations.data?.find((c) => c.id === activeConvId)?.customerName ?? null
+              }
+            />
           </TabsContent>
           <TabsContent value="log" className="mt-3 space-y-4">
             <ProcessingLogPanel logs={sortedLogs} pending={pendingSteps} isSending={isSending} />
@@ -776,11 +786,85 @@ function PendingDraftsBadge() {
   );
 }
 
-function ApprovalQueue() {
+type CustomerProfileData = {
+  customerName: string | null;
+  phone: string;
+  totalMessages: number;
+  totalDrafts: number;
+  approvedCount: number;
+  rejectedCount: number;
+  approvalRate: number;
+  avgReplyChars: number;
+  topIntents: Array<{ intent: string; count: number }>;
+  topRejectCategories: Array<{ category: string; count: number }>;
+  lastSeen: Date | null;
+};
+
+function CustomerProfileBadge({ profile }: { profile: CustomerProfileData }) {
+  const decided = profile.approvedCount + profile.rejectedCount;
+  const approvalPct = decided === 0 ? null : Math.round(profile.approvalRate * 100);
+  const top = profile.topIntents[0];
+  return (
+    <div className="mt-2 rounded-md border border-amber-300/15 bg-amber-300/[0.04] px-2.5 py-2">
+      <div className="flex items-center gap-2 flex-wrap text-[11px] leading-tight">
+        <span className="text-foreground/80">
+          <span className="text-muted-foreground">Pattern ·</span>{" "}
+          {profile.totalMessages} msg{profile.totalMessages === 1 ? "" : "s"}
+        </span>
+        {top ? (
+          <span className="text-foreground/80">
+            <span className="text-muted-foreground">· usually</span>{" "}
+            <span className={`px-1.5 py-0.5 rounded border ${intentTone(top.intent)} text-[10px]`}>{top.intent}</span>
+          </span>
+        ) : null}
+        {approvalPct !== null ? (
+          <span className="text-foreground/80">
+            <span className="text-muted-foreground">· approve</span>{" "}
+            <span className="text-emerald-300 tabular-nums">{approvalPct}%</span>
+            <span className="text-muted-foreground"> ({decided})</span>
+          </span>
+        ) : null}
+        {profile.avgReplyChars > 0 ? (
+          <span className="text-foreground/80">
+            <span className="text-muted-foreground">· avg reply</span>{" "}
+            <span className="tabular-nums">{profile.avgReplyChars}c</span>
+          </span>
+        ) : null}
+        {profile.topRejectCategories[0] ? (
+          <span className="text-foreground/80">
+            <span className="text-muted-foreground">· reject</span>{" "}
+            <span className="text-rose-300">
+              {(REJECT_CATEGORY_LABELS as Record<string, string>)[profile.topRejectCategories[0].category] ??
+                profile.topRejectCategories[0].category}
+            </span>
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ApprovalQueue({
+  activeConversationId,
+  customerName,
+}: {
+  activeConversationId?: number | null;
+  customerName?: string | null;
+} = {}) {
   const utils = trpc.useUtils();
-  const pending = trpc.drafts.listPending.useQuery(undefined, {
-    refetchInterval: 2500,
-  });
+  const [filterToActive, setFilterToActive] = useState(true);
+  const filterConvId =
+    filterToActive && activeConversationId && activeConversationId > 0
+      ? activeConversationId
+      : undefined;
+  const pending = trpc.drafts.listPending.useQuery(
+    filterConvId ? { conversationId: filterConvId } : undefined,
+    { refetchInterval: 2500 },
+  );
+  const profile = trpc.customers.profile.useQuery(
+    { conversationId: filterConvId ?? 0 },
+    { enabled: !!filterConvId, staleTime: 10_000 },
+  );
   const conversations = trpc.conversations.list.useQuery();
 
   const [rejectDraftId, setRejectDraftId] = useState<number | null>(null);
@@ -824,13 +908,33 @@ function ApprovalQueue() {
   return (
     <Card className="bg-white/[0.03] border-white/10">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 font-display text-lg">
-          <ThumbsDown className="size-4 text-amber-300 rotate-180" />
-          Approval Queue
+        <CardTitle className="flex items-center justify-between gap-2 font-display text-lg">
+          <span className="flex items-center gap-2">
+            <ThumbsDown className="size-4 text-amber-300 rotate-180" />
+            Approval Queue
+          </span>
+          {activeConversationId && activeConversationId > 0 ? (
+            <button
+              type="button"
+              onClick={() => setFilterToActive((v) => !v)}
+              className={`text-[10px] uppercase tracking-widest px-2 py-1 rounded-md border transition-colors ${
+                filterToActive
+                  ? "bg-amber-300/15 text-amber-200 border-amber-300/30"
+                  : "bg-white/[0.03] text-muted-foreground border-white/10 hover:bg-white/[0.06]"
+              }`}
+            >
+              {filterToActive
+                ? `Showing ${customerName ?? "selected"} · click for All`
+                : "Showing All  ·  click to filter"}
+            </button>
+          ) : null}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           AI drafts await your <span className="text-emerald-300">Approve</span> or <span className="text-rose-300">Reject</span>. Rejections teach the model.
         </p>
+        {filterConvId && profile.data ? (
+          <CustomerProfileBadge profile={profile.data} />
+        ) : null}
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[560px] pr-2">

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   conversations,
@@ -262,13 +262,19 @@ export async function getLatestPendingDraftForMessage(
   return rows[0];
 }
 
-export async function listPendingDrafts(limit = 50): Promise<Draft[]> {
+export async function listPendingDrafts(
+  options: { conversationId?: number; limit?: number } = {},
+): Promise<Draft[]> {
+  const { conversationId, limit = 50 } = options;
   const db = await getDb();
   if (!db) return [];
+  const where = conversationId
+    ? and(eq(drafts.status, "pending_approval"), eq(drafts.conversationId, conversationId))
+    : eq(drafts.status, "pending_approval");
   return db
     .select()
     .from(drafts)
-    .where(eq(drafts.status, "pending_approval"))
+    .where(where)
     .orderBy(desc(drafts.id))
     .limit(limit);
 }
@@ -323,4 +329,140 @@ export async function resetDemoData(): Promise<{ ok: boolean }> {
   await db.delete(messages);
   await db.delete(conversations);
   return { ok: true };
+}
+
+
+/* ---- Customer profile aggregation (for "this customer usually asks X") ---- */
+
+export type CustomerProfile = {
+  conversationId: number;
+  phone: string;
+  customerName: string | null;
+  totalMessages: number;
+  totalDrafts: number;
+  approvedCount: number;
+  rejectedCount: number;
+  approvalRate: number; // 0..1
+  avgReplyChars: number;
+  topIntents: Array<{ intent: string; count: number }>;
+  topRejectCategories: Array<{ category: string; count: number }>;
+  lastSeen: Date | null;
+};
+
+export async function getCustomerProfile(
+  conversationId: number,
+): Promise<CustomerProfile | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const convRows = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  const conv = convRows[0];
+  if (!conv) return null;
+
+  const msgs = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId));
+
+  const dRows = await db
+    .select()
+    .from(drafts)
+    .where(eq(drafts.conversationId, conversationId));
+
+  // Rejections for drafts in this conversation
+  const draftIds = dRows.map((d) => d.id);
+  const rejRows: typeof rejections.$inferSelect[] = [];
+  if (draftIds.length > 0) {
+    const all = await db.select().from(rejections);
+    for (const r of all) if (draftIds.includes(r.draftId)) rejRows.push(r);
+  }
+  // Style examples (approved replies) for this conversation
+  const seRows: typeof styleExamples.$inferSelect[] = [];
+  if (draftIds.length > 0) {
+    const all = await db.select().from(styleExamples);
+    for (const s of all) if (draftIds.includes(s.draftId)) seRows.push(s);
+  }
+
+  // Intent distribution from inbound messages (and draft.intent as fallback)
+  const intentCounts = new Map<string, number>();
+  for (const m of msgs) {
+    if (m.direction === "inbound" && m.intent) {
+      intentCounts.set(m.intent, (intentCounts.get(m.intent) ?? 0) + 1);
+    }
+  }
+  if (intentCounts.size === 0) {
+    for (const d of dRows) {
+      intentCounts.set(d.intent, (intentCounts.get(d.intent) ?? 0) + 1);
+    }
+  }
+  const topIntents = Array.from(intentCounts.entries())
+    .map(([intent, count]) => ({ intent, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  const catCounts = new Map<string, number>();
+  for (const r of rejRows) {
+    catCounts.set(r.category, (catCounts.get(r.category) ?? 0) + 1);
+  }
+  const topRejectCategories = Array.from(catCounts.entries())
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  const approvedCount = seRows.length;
+  const rejectedCount = rejRows.length;
+  const decided = approvedCount + rejectedCount;
+  const approvalRate = decided === 0 ? 0 : approvedCount / decided;
+  const avgReplyChars =
+    seRows.length === 0
+      ? 0
+      : Math.round(seRows.reduce((s, x) => s + x.approvedReply.length, 0) / seRows.length);
+
+  let lastSeen: Date | null = null;
+  for (const m of msgs) {
+    if (!lastSeen || m.createdAt > lastSeen) lastSeen = m.createdAt;
+  }
+
+  return {
+    conversationId: conv.id,
+    phone: conv.phone,
+    customerName: conv.customerName,
+    totalMessages: msgs.length,
+    totalDrafts: dRows.length,
+    approvedCount,
+    rejectedCount,
+    approvalRate,
+    avgReplyChars,
+    topIntents,
+    topRejectCategories,
+    lastSeen,
+  };
+}
+
+/* ---- Customer-specific style examples (for personalized RAG) ---- */
+export async function listStyleExamplesByPhone(
+  phone: string,
+  limit = 50,
+): Promise<StyleExample[]> {
+  const db = await getDb();
+  if (!db) return [];
+  // join via drafts.conversationId → conversations.phone
+  const convRows = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.phone, phone))
+    .limit(1);
+  const conv = convRows[0];
+  if (!conv) return [];
+  const draftRows = await db
+    .select()
+    .from(drafts)
+    .where(eq(drafts.conversationId, conv.id));
+  const ids = draftRows.map((d) => d.id);
+  if (ids.length === 0) return [];
+  const all = await db.select().from(styleExamples).orderBy(desc(styleExamples.id)).limit(500);
+  return all.filter((s) => ids.includes(s.draftId)).slice(0, limit);
 }

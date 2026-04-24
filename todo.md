@@ -56,3 +56,11 @@
 - [x] Add `Reset demo` button in header (clears conversations/drafts/rejections, preserves knowledge base) — fixes accumulated duplicate fixture data
 - [x] Existing 23 vitest still pass after refactor
 - [x] Save checkpoint
+
+## Phase 5 — Customer-aware Approval Queue (complete)
+
+- [x] Filter Approval Queue by `activeConvId` (with "showing X · click for all" toggle)
+- [x] Add `customers.profile(conversationId)` tRPC procedure: aggregate intent distribution, message count, approval rate, avg reply length, top reject categories, last seen
+- [x] Customer profile badge on Approval Queue header when filtered
+- [x] Inject customer-specific history into RAG retrieval: prefer `style_examples` from same phone (`listStyleExamplesByPhone`), fall back to same-intent global
+- [x] Vitest: 3 new tests — customer profile aggregation, null for unknown conv, listStyleExamplesByPhone scoping (26 total passing)
