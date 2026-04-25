@@ -40,83 +40,120 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Fraunces", "Playfair Display", ui-serif, Georgia, serif;
+  --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Stripe-inspired semantic colors */
+  --color-iris: var(--iris);
+  --color-iris-soft: var(--iris-soft);
+  --color-navy: var(--navy);
+  --color-cyan: var(--cyan);
+  --color-sage: var(--sage);
+  --color-rose: var(--rose);
+  --color-canvas: var(--canvas);
+  --color-canvas-soft: var(--canvas-soft);
 }
 
-/* Premium DropShop palette: deep ink + champagne gold + soft cream */
+/*
+  Stripe Soft Light palette
+  - Canvas: pure white + #F6F9FC soft gray
+  - Ink: navy #0A2540 (NOT pure black) for headings/text
+  - Primary: iris #635BFF
+  - Accent gradient: iris → cyan #00D4FF (used sparingly)
+  - Borders: hairline #E6EBF1
+  - Shadows: very soft, multi-layered
+*/
 :root {
-  --radius: 0.65rem;
+  --radius: 0.625rem;
 
-  /* Light mode (used for the "customer phone" surfaces). */
-  --background: oklch(0.98 0.005 80);
-  --foreground: oklch(0.22 0.015 60);
+  --background: oklch(1 0 0);                  /* white */
+  --foreground: oklch(0.22 0.04 254);          /* navy #0A2540 */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.015 60);
+  --card-foreground: oklch(0.22 0.04 254);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.015 60);
-  --primary: oklch(0.74 0.13 78);            /* champagne gold */
-  --primary-foreground: oklch(0.18 0.02 60);
-  --secondary: oklch(0.96 0.005 80);
-  --secondary-foreground: oklch(0.3 0.015 60);
-  --muted: oklch(0.95 0.005 80);
-  --muted-foreground: oklch(0.5 0.012 60);
-  --accent: oklch(0.93 0.02 80);
-  --accent-foreground: oklch(0.22 0.015 60);
-  --destructive: oklch(0.55 0.21 27);
-  --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.9 0.005 80);
-  --input: oklch(0.9 0.005 80);
-  --ring: oklch(0.74 0.13 78);
-  --chart-1: oklch(0.74 0.13 78);
-  --chart-2: oklch(0.6 0.1 60);
-  --chart-3: oklch(0.4 0.05 60);
-  --chart-4: oklch(0.7 0.15 30);
-  --chart-5: oklch(0.5 0.18 27);
-  --sidebar: oklch(0.18 0.015 60);
-  --sidebar-foreground: oklch(0.92 0.01 80);
-  --sidebar-primary: oklch(0.74 0.13 78);
-  --sidebar-primary-foreground: oklch(0.18 0.02 60);
-  --sidebar-accent: oklch(0.24 0.015 60);
-  --sidebar-accent-foreground: oklch(0.92 0.01 80);
-  --sidebar-border: oklch(0.28 0.012 60);
-  --sidebar-ring: oklch(0.74 0.13 78);
+  --popover-foreground: oklch(0.22 0.04 254);
+  --primary: oklch(0.55 0.24 274);             /* iris #635BFF */
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.975 0.005 248);         /* #F6F9FC */
+  --secondary-foreground: oklch(0.32 0.04 250);
+  --muted: oklch(0.975 0.005 248);
+  --muted-foreground: oklch(0.5 0.025 250);    /* #425466 */
+  --accent: oklch(0.96 0.02 274);              /* iris-tinted accent */
+  --accent-foreground: oklch(0.32 0.18 274);
+  --destructive: oklch(0.6 0.21 18);           /* rose */
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.92 0.005 248);             /* #E6EBF1 */
+  --input: oklch(0.92 0.005 248);
+  --ring: oklch(0.55 0.24 274);
+  --chart-1: oklch(0.55 0.24 274);             /* iris */
+  --chart-2: oklch(0.7 0.17 220);              /* cyan-blue */
+  --chart-3: oklch(0.65 0.13 155);             /* sage */
+  --chart-4: oklch(0.7 0.18 60);               /* warm amber */
+  --chart-5: oklch(0.6 0.21 18);               /* rose */
+  --sidebar: oklch(0.975 0.005 248);
+  --sidebar-foreground: oklch(0.22 0.04 254);
+  --sidebar-primary: oklch(0.55 0.24 274);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.96 0.02 274);
+  --sidebar-accent-foreground: oklch(0.32 0.18 274);
+  --sidebar-border: oklch(0.92 0.005 248);
+  --sidebar-ring: oklch(0.55 0.24 274);
+
+  --iris: oklch(0.55 0.24 274);
+  --iris-soft: oklch(0.95 0.04 274);
+  --navy: oklch(0.22 0.04 254);
+  --cyan: oklch(0.78 0.16 220);
+  --sage: oklch(0.65 0.13 155);
+  --rose: oklch(0.6 0.21 18);
+  --canvas: oklch(1 0 0);
+  --canvas-soft: oklch(0.975 0.005 248);
 }
 
-/* The dashboard itself runs in dark mode as the "house" theme. */
+/* Dark mode kept as fallback (not used by default) */
 .dark {
-  --background: oklch(0.16 0.012 60);
-  --foreground: oklch(0.94 0.01 80);
-  --card: oklch(0.2 0.014 60);
-  --card-foreground: oklch(0.94 0.01 80);
-  --popover: oklch(0.2 0.014 60);
-  --popover-foreground: oklch(0.94 0.01 80);
-  --primary: oklch(0.78 0.14 78);
-  --primary-foreground: oklch(0.16 0.02 60);
-  --secondary: oklch(0.24 0.012 60);
-  --secondary-foreground: oklch(0.9 0.01 80);
-  --muted: oklch(0.24 0.012 60);
-  --muted-foreground: oklch(0.7 0.012 60);
-  --accent: oklch(0.27 0.014 60);
-  --accent-foreground: oklch(0.94 0.01 80);
-  --destructive: oklch(0.65 0.21 27);
+  --background: oklch(0.18 0.025 254);
+  --foreground: oklch(0.96 0.005 248);
+  --card: oklch(0.22 0.025 254);
+  --card-foreground: oklch(0.96 0.005 248);
+  --popover: oklch(0.22 0.025 254);
+  --popover-foreground: oklch(0.96 0.005 248);
+  --primary: oklch(0.65 0.22 274);
+  --primary-foreground: oklch(0.18 0.025 254);
+  --secondary: oklch(0.26 0.025 254);
+  --secondary-foreground: oklch(0.96 0.005 248);
+  --muted: oklch(0.26 0.025 254);
+  --muted-foreground: oklch(0.7 0.015 250);
+  --accent: oklch(0.3 0.05 274);
+  --accent-foreground: oklch(0.96 0.005 248);
+  --destructive: oklch(0.65 0.21 18);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(1 0 0 / 8%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.78 0.14 78);
-  --chart-1: oklch(0.78 0.14 78);
-  --chart-2: oklch(0.65 0.12 60);
-  --chart-3: oklch(0.5 0.1 60);
-  --chart-4: oklch(0.7 0.15 30);
-  --chart-5: oklch(0.6 0.18 27);
-  --sidebar: oklch(0.18 0.012 60);
-  --sidebar-foreground: oklch(0.92 0.01 80);
-  --sidebar-primary: oklch(0.78 0.14 78);
-  --sidebar-primary-foreground: oklch(0.16 0.02 60);
-  --sidebar-accent: oklch(0.24 0.012 60);
-  --sidebar-accent-foreground: oklch(0.94 0.01 80);
+  --ring: oklch(0.65 0.22 274);
+  --chart-1: oklch(0.65 0.22 274);
+  --chart-2: oklch(0.75 0.17 220);
+  --chart-3: oklch(0.7 0.13 155);
+  --chart-4: oklch(0.75 0.18 60);
+  --chart-5: oklch(0.65 0.21 18);
+  --sidebar: oklch(0.2 0.025 254);
+  --sidebar-foreground: oklch(0.94 0.005 248);
+  --sidebar-primary: oklch(0.65 0.22 274);
+  --sidebar-primary-foreground: oklch(0.18 0.025 254);
+  --sidebar-accent: oklch(0.26 0.025 254);
+  --sidebar-accent-foreground: oklch(0.96 0.005 248);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.78 0.14 78);
+  --sidebar-ring: oklch(0.65 0.22 274);
+
+  --iris: oklch(0.65 0.22 274);
+  --iris-soft: oklch(0.3 0.05 274);
+  --navy: oklch(0.96 0.005 248);
+  --cyan: oklch(0.78 0.16 220);
+  --sage: oklch(0.7 0.13 155);
+  --rose: oklch(0.65 0.21 18);
+  --canvas: oklch(0.18 0.025 254);
+  --canvas-soft: oklch(0.22 0.025 254);
 }
 
 @layer base {
@@ -124,8 +161,9 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply bg-secondary text-foreground font-sans antialiased;
     font-feature-settings: "ss01", "cv11";
+    font-variant-ligatures: common-ligatures;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -142,6 +180,10 @@
   .font-display {
     font-family: var(--font-display);
     letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+  .font-mono {
+    font-family: var(--font-mono);
   }
 }
 
@@ -165,39 +207,131 @@
   }
   @media (min-width: 1024px) {
     .container {
-      padding-left: 2rem;
-      padding-right: 2rem;
-      max-width: 1280px;
+      padding-left: 2.5rem;
+      padding-right: 2.5rem;
+      max-width: 1320px;
     }
   }
 
-  /* Subtle premium grain for "house" surfaces */
-  .grain {
-    background-image:
-      radial-gradient(circle at 1px 1px, oklch(1 0 0 / 0.025) 1px, transparent 0);
-    background-size: 4px 4px;
+  /* Eyebrow label */
+  .eyebrow {
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--muted-foreground);
   }
 
-  /* Soft champagne gradient text */
-  .text-champagne {
-    background: linear-gradient(135deg,
-      oklch(0.85 0.13 78) 0%,
-      oklch(0.78 0.14 78) 40%,
-      oklch(0.65 0.12 60) 100%);
+  /* Display heading — Stripe-style tight grotesque */
+  .heading-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.022em;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--navy);
+  }
+
+  /* Iris gradient text — for hero accents */
+  .text-iris-gradient {
+    background: linear-gradient(135deg, #635bff 0%, #5a52f0 50%, #00d4ff 130%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
-  /* iMessage-style bubbles */
-  .bubble-customer {
-    @apply bg-white text-zinc-900 rounded-2xl rounded-bl-md px-4 py-2 shadow-sm;
+  /* Premium panel — Stripe soft shadow stack */
+  .panel {
+    @apply rounded-[12px] border bg-card;
+    border-color: var(--border);
+    box-shadow:
+      0 0 0 1px rgba(50, 50, 93, 0.025),
+      0 2px 5px 0 rgba(50, 50, 93, 0.04),
+      0 1px 1.5px 0 rgba(0, 0, 0, 0.03);
+  }
+
+  /* Card with iris-tinted top border for active states */
+  .panel-active {
+    @apply rounded-[12px] border bg-card;
+    border-color: rgba(99, 91, 255, 0.3);
+    box-shadow:
+      0 0 0 1px rgba(99, 91, 255, 0.1),
+      0 4px 12px -2px rgba(99, 91, 255, 0.15),
+      0 2px 4px -1px rgba(50, 50, 93, 0.06);
+  }
+
+  /* iMessage bubbles — phone simulator (customer is "self" → blue right) */
+  .bubble-customer-self {
+    background: linear-gradient(180deg, #3a8cff 0%, #2c7bff 100%);
+    color: white;
+    @apply rounded-[18px] rounded-br-[6px] px-3.5 py-2 text-[15px] leading-snug;
+    max-width: 80%;
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.08);
+  }
+  .bubble-business-other {
+    background: #e9e9eb;
+    color: #1a1a1a;
+    @apply rounded-[18px] rounded-bl-[6px] px-3.5 py-2 text-[15px] leading-snug;
     max-width: 80%;
   }
-  .bubble-business {
-    background: linear-gradient(135deg, oklch(0.82 0.13 78) 0%, oklch(0.72 0.13 78) 100%);
-    color: oklch(0.18 0.02 60);
-    @apply rounded-2xl rounded-br-md px-4 py-2 shadow-sm;
-    max-width: 80%;
+
+  /* Store inbox bubbles — manager POV (customer = left/gray, DropShop = right/iris) */
+  .bubble-customer-inbox {
+    background: var(--secondary);
+    color: var(--navy);
+    border: 1px solid var(--border);
+    @apply rounded-[14px] rounded-bl-[6px] px-3.5 py-2.5 text-[14px] leading-snug;
+    max-width: 78%;
+  }
+  .bubble-business-inbox {
+    background: linear-gradient(180deg, #635bff 0%, #5a52f0 100%);
+    color: white;
+    @apply rounded-[14px] rounded-br-[6px] px-3.5 py-2.5 text-[14px] leading-snug;
+    max-width: 78%;
+    box-shadow: 0 4px 12px -4px rgba(99, 91, 255, 0.4);
+  }
+
+  /* Iris-tinted pill (for category badges, customer profile metrics) */
+  .pill-iris {
+    background: var(--iris-soft);
+    color: var(--iris);
+    border: 1px solid color-mix(in oklch, var(--iris) 25%, transparent);
+    @apply rounded-md px-2 py-0.5 text-[11px] font-medium;
+  }
+  .pill-sage {
+    background: color-mix(in oklch, var(--sage) 10%, white);
+    color: var(--sage);
+    border: 1px solid color-mix(in oklch, var(--sage) 30%, transparent);
+    @apply rounded-md px-2 py-0.5 text-[11px] font-medium;
+  }
+  .pill-rose {
+    background: color-mix(in oklch, var(--rose) 10%, white);
+    color: var(--rose);
+    border: 1px solid color-mix(in oklch, var(--rose) 30%, transparent);
+    @apply rounded-md px-2 py-0.5 text-[11px] font-medium;
+  }
+
+  /* Skeleton shimmer */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(99, 91, 255, 0.08) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Soft enter animation */
+  .animate-in-soft {
+    animation: in-soft 0.32s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  @keyframes in-soft {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 }

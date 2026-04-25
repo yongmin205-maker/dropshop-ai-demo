@@ -64,3 +64,21 @@
 - [x] Customer profile badge on Approval Queue header when filtered
 - [x] Inject customer-specific history into RAG retrieval: prefer `style_examples` from same phone (`listStyleExamplesByPhone`), fall back to same-intent global
 - [x] Vitest: 3 new tests — customer profile aggregation, null for unknown conv, listStyleExamplesByPhone scoping (26 total passing)
+
+
+## Phase 6 — Stripe Soft Light visual refresh (in progress)
+
+- [x] Build moodboard with 5 tone-and-manner candidates; user chose Option 3 (Stripe Soft Light)
+- [ ] Rewrite `index.css` with Stripe Soft Light tokens: white canvas (#FFFFFF), navy ink (#0A2540), iris primary (#635BFF), gray-100 (#F6F9FC) panels, soft shadows
+- [ ] Switch ThemeProvider default from "dark" to "light" so semantic tokens read light values everywhere
+- [ ] Replace champagne/clay class names (`bubble-business-inbox`, `text-champagne`, `surface-cream`) with Stripe-language equivalents
+- [ ] Header: clean white bar, navy logo, iris-tinted Live/Simulator badge, Reset/Pitch deck as ghost buttons
+- [ ] Phone simulator: keep iMessage native (light bg already matches)
+- [ ] Store Inbox: white cards on F6F9FC base, soft shadows, navy headings
+- [ ] Approval Queue: white cards, iris primary CTA, sage success, rose destructive
+- [ ] Customer profile badge: iris-tinted pill row
+- [ ] Inbox bubbles: customer = gray-100 with subtle border, DropShop = iris gradient
+- [ ] Charts/RAG memory bar widget: navy + iris + sage palette
+- [ ] Add Reset demo confirm dialog (prevent accidental click during demo)
+- [ ] Polish empty states across all tabs
+- [ ] Run vitest (26+ pass), save checkpoint, deliver

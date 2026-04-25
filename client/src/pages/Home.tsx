@@ -36,27 +36,27 @@ type AgentStep = {
 };
 
 const STEP_META: Record<AgentStep["step"], { label: string; tone: string; icon: React.ReactNode }> = {
-  intent_detected: { label: "Intent detected", tone: "text-amber-300", icon: <Sparkles className="size-3.5" /> },
-  mock_api_called: { label: "Mock API called", tone: "text-sky-300", icon: <CircleDot className="size-3.5" /> },
-  response_drafted: { label: "Response drafted", tone: "text-emerald-300", icon: <CircleDot className="size-3.5" /> },
-  sent: { label: "Sent", tone: "text-emerald-400", icon: <CheckCircle2 className="size-3.5" /> },
-  escalated: { label: "Escalated", tone: "text-rose-400", icon: <AlertTriangle className="size-3.5" /> },
+  intent_detected: { label: "Intent detected", tone: "text-[var(--iris)]", icon: <Sparkles className="size-3.5" /> },
+  mock_api_called: { label: "Mock API called", tone: "text-sky-700", icon: <CircleDot className="size-3.5" /> },
+  response_drafted: { label: "Response drafted", tone: "text-emerald-700", icon: <CircleDot className="size-3.5" /> },
+  sent: { label: "Sent", tone: "text-emerald-700", icon: <CheckCircle2 className="size-3.5" /> },
+  escalated: { label: "Escalated", tone: "text-rose-600", icon: <AlertTriangle className="size-3.5" /> },
 };
 
 function intentTone(intent: string | null | undefined) {
   switch (intent) {
     case "Critical Escalation":
-      return "bg-rose-500/15 text-rose-300 border-rose-500/30";
+      return "bg-rose-50 text-rose-700 border-rose-200";
     case "Pickup Request":
-      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "ETA/Order Status":
-      return "bg-sky-500/15 text-sky-300 border-sky-500/30";
+      return "bg-sky-50 text-sky-700 border-sky-200";
     case "Alteration Quote":
-      return "bg-violet-500/15 text-violet-300 border-violet-500/30";
+      return "bg-violet-50 text-violet-700 border-violet-200";
     case "Membership & Pricing":
-      return "bg-amber-500/15 text-amber-200 border-amber-500/30";
+      return "bg-amber-50 text-amber-700 border-amber-200";
     default:
-      return "bg-white/10 text-white/70 border-white/15";
+      return "bg-secondary text-muted-foreground border-border";
   }
 }
 
@@ -140,16 +140,16 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground grain">
+    <div className="min-h-screen bg-secondary text-foreground">
       {/* Header */}
-      <header className="border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
+      <header className="border-b border-border bg-background">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="size-10 rounded-full bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <span className="font-display text-zinc-900 font-bold text-lg">D</span>
+            <div className="size-10 rounded-xl bg-gradient-to-br from-[#635BFF] to-[#5a52f0] flex items-center justify-center shadow-md shadow-[#635BFF]/25">
+              <span className="font-display text-white font-bold text-lg">D</span>
             </div>
             <div>
-              <h1 className="font-display text-xl tracking-tight text-champagne">DropShop</h1>
+              <h1 className="font-display text-xl tracking-tight text-foreground">DropShop</h1>
               <p className="text-xs text-muted-foreground tracking-wide uppercase">
                 AI SMS Concierge · Demo
               </p>
@@ -158,7 +158,7 @@ export default function Home() {
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <LiveModeBadge live={!!config.data?.liveMode} phone={config.data?.twilioPhone ?? null} />
             <ResetDemoButton />
-            <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-white/[0.04] border-white/10 hover:bg-white/[0.08]">
+            <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-background border-border hover:bg-secondary text-foreground">
               <ArrowUpRight className="size-4 mr-1.5" />
               Pitch deck
             </Button>
@@ -167,7 +167,7 @@ export default function Home() {
       </header>
 
       {/* Preset scenarios bar */}
-      <div className="border-b border-white/5 bg-white/[0.015]">
+      <div className="border-b border-border bg-background">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 overflow-x-auto no-scrollbar">
           <span className="text-xs text-muted-foreground uppercase tracking-widest shrink-0 mr-1">
             Demo scenarios
@@ -177,15 +177,15 @@ export default function Home() {
               key={s.id}
               size="sm"
               variant="outline"
-              className="shrink-0 bg-white/[0.03] border-white/10 hover:border-amber-300/40 hover:bg-amber-300/[0.08]"
+              className="shrink-0 bg-secondary border-border text-foreground hover:border-[var(--iris)]/40 hover:bg-[var(--iris-soft)]"
               onClick={() => injectScenario(s)}
               disabled={isSending}
             >
               <span className={`size-1.5 rounded-full mr-2 ${
-                s.intentHint === "Critical Escalation" ? "bg-rose-400" :
-                s.intentHint === "Pickup Request" ? "bg-emerald-400" :
-                s.intentHint === "ETA/Order Status" ? "bg-sky-400" :
-                s.intentHint === "Alteration Quote" ? "bg-violet-400" : "bg-amber-300"
+                s.intentHint === "Critical Escalation" ? "bg-rose-500" :
+                s.intentHint === "Pickup Request" ? "bg-emerald-500" :
+                s.intentHint === "ETA/Order Status" ? "bg-sky-500" :
+                s.intentHint === "Alteration Quote" ? "bg-violet-500" : "bg-[var(--iris)]"
               }`} />
               {s.label}
             </Button>
@@ -223,7 +223,7 @@ export default function Home() {
         {/* Right: AI log + escalations */}
         <section className="col-span-4 space-y-4">
           <Tabs defaultValue="approvals">
-            <TabsList className="bg-white/[0.04] border border-white/10">
+            <TabsList className="bg-secondary border border-border">
               <TabsTrigger value="approvals">
                 Approvals
                 <PendingDraftsBadge />
@@ -232,7 +232,7 @@ export default function Home() {
               <TabsTrigger value="escalations">
                 Critical
                 {(escalations.data?.length ?? 0) > 0 && (
-                  <Badge className="ml-2 bg-rose-500/20 text-rose-300 border-rose-500/30">
+                  <Badge className="ml-2 bg-rose-50 text-rose-700 border-rose-200">
                     {escalations.data?.length}
                   </Badge>
                 )}
@@ -271,7 +271,7 @@ export default function Home() {
       {/* Mobile workspace (tabs) */}
       <main className="lg:hidden max-w-[1600px] mx-auto px-3 py-4">
         <Tabs defaultValue="simulator" className="w-full">
-          <TabsList className="bg-white/[0.04] border border-white/10 w-full grid grid-cols-4">
+          <TabsList className="bg-secondary border border-border w-full grid grid-cols-4">
             <TabsTrigger value="simulator" className="text-xs">Simulator</TabsTrigger>
             <TabsTrigger value="inbox" className="text-xs">Inbox</TabsTrigger>
             <TabsTrigger value="approvals" className="text-xs">
@@ -328,7 +328,7 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 mt-8">
+      <footer className="border-t border-border bg-background mt-8">
         <div className="max-w-[1600px] mx-auto px-6 py-6 flex items-center justify-between text-xs text-muted-foreground">
           <span>DropShop AI · Mock CleanCloud POS · {config.data?.liveMode ? "Live SMS via Twilio" : "Simulator Mode"}</span>
           <span>Built for the dry-cleaning operator who never wants to type "Will do" again.</span>
@@ -345,15 +345,15 @@ export default function Home() {
 function LiveModeBadge({ live, phone }: { live: boolean; phone: string | null }) {
   if (live) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs">
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs">
         <Wifi className="size-3.5" />
         <span className="font-medium">Live · {phone}</span>
       </div>
     );
   }
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-amber-300/30 bg-amber-300/10 text-amber-200 text-xs">
-      <span className="size-2 rounded-full bg-amber-300 animate-pulse" />
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--iris)]/25 bg-[var(--iris-soft)] text-[var(--iris)] text-xs">
+      <span className="size-2 rounded-full bg-[var(--iris)] animate-pulse" />
       <span className="font-medium tracking-wide">Simulator Mode</span>
     </div>
   );
@@ -380,8 +380,8 @@ function PhoneSimulator({
 }) {
   const visibleMessages = messages; // already filtered to active conversation by parent
   return (
-    <div className="rounded-[2rem] bg-gradient-to-b from-zinc-950 to-zinc-900 p-2 shadow-2xl shadow-black/40 border border-white/5">
-      <div className="rounded-[1.6rem] bg-zinc-100 text-zinc-900 overflow-hidden flex flex-col" style={{ minHeight: 640 }}>
+    <div className="rounded-[2rem] bg-gradient-to-b from-zinc-800 to-zinc-900 p-2 shadow-xl shadow-black/15 border border-zinc-900">
+      <div className="rounded-[1.6rem] bg-zinc-50 text-zinc-900 overflow-hidden flex flex-col" style={{ minHeight: 640 }}>
         {/* Phone status bar */}
         <div className="flex items-center justify-between text-xs text-zinc-500 px-5 pt-3 pb-2">
           <span>9:41</span>
@@ -393,8 +393,8 @@ function PhoneSimulator({
         </div>
         {/* Contact header */}
         <div className="px-4 pb-3 border-b border-zinc-200 flex flex-col items-center">
-          <div className="size-12 rounded-full bg-gradient-to-br from-amber-300 to-amber-600 flex items-center justify-center shadow mb-1.5">
-            <span className="font-display font-bold text-zinc-900">D</span>
+          <div className="size-12 rounded-xl bg-gradient-to-br from-[#635BFF] to-[#5a52f0] flex items-center justify-center shadow mb-1.5">
+            <span className="font-display font-bold text-white">D</span>
           </div>
           <div className="text-sm font-semibold">DropShop</div>
           <div className="text-xs text-zinc-500">iMessage</div>
@@ -508,11 +508,11 @@ function StoreInbox({
   }, [activeId, sortedConvs, onSelect]);
 
   return (
-    <Card className="bg-white/[0.03] border-white/10 backdrop-blur-sm">
+    <Card className="panel">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between font-display text-lg">
           <span className="flex items-center gap-2">
-            <Building2 className="size-4 text-amber-300" />
+            <Building2 className="size-4 text-[var(--iris)]" />
             Store Inbox
           </span>
           <span className="text-xs font-normal text-muted-foreground">
@@ -534,14 +534,14 @@ function StoreInbox({
               onClick={() => onSelect(c.id)}
               className={`shrink-0 text-left px-3 py-2 rounded-lg border transition ${
                 c.id === activeConv?.id
-                  ? "border-amber-300/40 bg-amber-300/[0.06]"
-                  : "border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
+                  ? "border-[var(--iris)]/35 bg-[var(--iris-soft)]"
+                  : "border-border bg-secondary hover:bg-[var(--iris-soft)]/50"
               }`}
             >
               <div className="text-sm font-medium flex items-center gap-2">
                 {c.customerName ?? "Unknown"}
                 {c.escalated === 1 && (
-                  <AlertTriangle className="size-3 text-rose-400" />
+                  <AlertTriangle className="size-3 text-rose-600" />
                 )}
               </div>
               <div className="text-[10px] text-muted-foreground tabular-nums">{c.phone}</div>
@@ -554,7 +554,7 @@ function StoreInbox({
           ))}
         </div>
 
-        <Separator className="bg-white/5" />
+        <Separator className="bg-border" />
 
         {/* Active thread */}
         {activeConv ? (
@@ -590,7 +590,7 @@ function StoreInbox({
                   return (
                     <div key={m.id} className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}>
                       <div className="max-w-[78%]">
-                        <div className={`text-[10px] uppercase tracking-widest mb-1 ${isCustomer ? "text-muted-foreground" : "text-sky-300/80 text-right"}`}>
+                        <div className={`text-[10px] uppercase tracking-widest mb-1 ${isCustomer ? "text-muted-foreground" : "text-[var(--iris)] text-right"}`}>
                           {isCustomer ? "Customer" : m.sender === "ai" ? "DropShop AI" : "Manager"}
                           {m.intent && (
                             <span className={`ml-2 inline-block px-1.5 py-0.5 rounded border text-[9px] ${intentTone(m.intent)}`}>
@@ -601,9 +601,10 @@ function StoreInbox({
                         <div
                           className={
                             isCustomer
-                              ? "rounded-2xl rounded-bl-md bg-zinc-700/60 text-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap"
-                              : "rounded-2xl rounded-br-md bg-blue-500 text-white px-3.5 py-2 text-sm whitespace-pre-wrap"
+                              ? "bubble-customer-inbox whitespace-pre-wrap"
+                              : "bubble-business-inbox whitespace-pre-wrap"
                           }
+                          style={{ maxWidth: "100%" }}
                         >
                           {m.body}
                         </div>
@@ -620,7 +621,7 @@ function StoreInbox({
         ) : (
           <div className="text-center py-12">
             <p className="text-sm text-muted-foreground">
-              Try the <span className="text-amber-300">{activeScenario.label}</span> scenario above.
+              Try the <span className="text-[var(--iris)] font-medium">{activeScenario.label}</span> scenario above.
             </p>
           </div>
         )}
@@ -639,10 +640,10 @@ function ProcessingLogPanel({
   isSending: boolean;
 }) {
   return (
-    <Card className="bg-white/[0.03] border-white/10">
+    <Card className="panel">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 font-display text-lg">
-          <Sparkles className="size-4 text-amber-300" />
+          <Sparkles className="size-4 text-[var(--iris)]" />
           AI Processing Log
         </CardTitle>
         <p className="text-xs text-muted-foreground">
@@ -685,7 +686,7 @@ function LogRow({
 }) {
   const meta = STEP_META[step];
   return (
-    <div className={`rounded-lg border border-white/8 bg-white/[0.02] p-3 ${pending ? "animate-pulse" : ""}`}>
+    <div className={`rounded-lg border border-border bg-secondary p-3 ${pending ? "animate-pulse" : ""}`}>
       <div className="flex items-center justify-between mb-1.5">
         <div className={`flex items-center gap-1.5 text-[10px] uppercase tracking-widest ${meta.tone}`}>
           {meta.icon}
@@ -703,7 +704,7 @@ function LogRow({
           <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
             view payload
           </summary>
-          <pre className="text-[10px] mt-1.5 p-2 rounded bg-black/30 text-foreground/70 overflow-auto max-h-40">
+          <pre className="text-[10px] mt-1.5 p-2 rounded bg-background border border-border text-foreground/80 overflow-auto max-h-40 font-mono">
             {JSON.stringify(detail, null, 2)}
           </pre>
         </details>
@@ -720,13 +721,13 @@ function EscalationsPanel({
   onResolve: (id: number) => void;
 }) {
   return (
-    <Card className="bg-rose-500/[0.03] border-rose-500/20">
+    <Card className="rounded-[12px] border bg-rose-50/40 border-rose-200">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 font-display text-lg text-rose-200">
+        <CardTitle className="flex items-center gap-2 font-display text-lg text-rose-700">
           <AlertTriangle className="size-4" />
           Critical Handoff
         </CardTitle>
-        <p className="text-xs text-rose-300/70">
+        <p className="text-xs text-rose-600/80">
           AI auto-reply suspended. Human manager must respond directly.
         </p>
       </CardHeader>
@@ -738,22 +739,22 @@ function EscalationsPanel({
         ) : (
           <div className="space-y-3">
             {escalations.map((e) => (
-              <div key={e.id} className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
+              <div key={e.id} className="rounded-lg border border-rose-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between mb-1">
-                  <Badge className="bg-rose-500/20 text-rose-200 border-rose-500/30">
+                  <Badge className="bg-rose-100 text-rose-700 border-rose-200">
                     {e.severity.toUpperCase()}
                   </Badge>
-                  <span className="text-[10px] text-rose-300/70">
+                  <span className="text-[10px] text-rose-600/70">
                     {format(new Date(e.createdAt), "MMM d · HH:mm")}
                   </span>
                 </div>
-                <p className="text-sm text-rose-100/90">{e.reason}</p>
+                <p className="text-sm text-rose-900">{e.reason}</p>
                 <div className="mt-2 flex items-center justify-between">
-                  <span className="text-[10px] text-rose-300/70">Conversation #{e.conversationId}</span>
+                  <span className="text-[10px] text-rose-600/70">Conversation #{e.conversationId}</span>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="bg-rose-500/10 border-rose-500/30 text-rose-100 hover:bg-rose-500/20"
+                    className="bg-white border-rose-200 text-rose-700 hover:bg-rose-50"
                     onClick={() => onResolve(e.id)}
                   >
                     Mark resolved
@@ -780,7 +781,7 @@ function PendingDraftsBadge() {
   const count = pending.data?.length ?? 0;
   if (count === 0) return null;
   return (
-    <Badge className="ml-2 bg-amber-300/20 text-amber-200 border-amber-300/30">
+    <Badge className="ml-2 bg-[var(--iris-soft)] text-[var(--iris)] border-[var(--iris)]/25">
       {count}
     </Badge>
   );
@@ -805,35 +806,35 @@ function CustomerProfileBadge({ profile }: { profile: CustomerProfileData }) {
   const approvalPct = decided === 0 ? null : Math.round(profile.approvalRate * 100);
   const top = profile.topIntents[0];
   return (
-    <div className="mt-2 rounded-md border border-amber-300/15 bg-amber-300/[0.04] px-2.5 py-2">
+    <div className="mt-2 rounded-md border border-[var(--iris)]/15 bg-[var(--iris-soft)]/60 px-2.5 py-2">
       <div className="flex items-center gap-2 flex-wrap text-[11px] leading-tight">
-        <span className="text-foreground/80">
+        <span className="text-foreground/90">
           <span className="text-muted-foreground">Pattern ·</span>{" "}
           {profile.totalMessages} msg{profile.totalMessages === 1 ? "" : "s"}
         </span>
         {top ? (
-          <span className="text-foreground/80">
+          <span className="text-foreground/90">
             <span className="text-muted-foreground">· usually</span>{" "}
             <span className={`px-1.5 py-0.5 rounded border ${intentTone(top.intent)} text-[10px]`}>{top.intent}</span>
           </span>
         ) : null}
         {approvalPct !== null ? (
-          <span className="text-foreground/80">
+          <span className="text-foreground/90">
             <span className="text-muted-foreground">· approve</span>{" "}
-            <span className="text-emerald-300 tabular-nums">{approvalPct}%</span>
+            <span className="text-emerald-700 tabular-nums font-medium">{approvalPct}%</span>
             <span className="text-muted-foreground"> ({decided})</span>
           </span>
         ) : null}
         {profile.avgReplyChars > 0 ? (
-          <span className="text-foreground/80">
+          <span className="text-foreground/90">
             <span className="text-muted-foreground">· avg reply</span>{" "}
             <span className="tabular-nums">{profile.avgReplyChars}c</span>
           </span>
         ) : null}
         {profile.topRejectCategories[0] ? (
-          <span className="text-foreground/80">
+          <span className="text-foreground/90">
             <span className="text-muted-foreground">· reject</span>{" "}
-            <span className="text-rose-300">
+            <span className="text-rose-600">
               {(REJECT_CATEGORY_LABELS as Record<string, string>)[profile.topRejectCategories[0].category] ??
                 profile.topRejectCategories[0].category}
             </span>
@@ -906,11 +907,11 @@ function ApprovalQueue({
   }, [conversations.data]);
 
   return (
-    <Card className="bg-white/[0.03] border-white/10">
+    <Card className="panel">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-2 font-display text-lg">
           <span className="flex items-center gap-2">
-            <ThumbsDown className="size-4 text-amber-300 rotate-180" />
+            <ThumbsDown className="size-4 text-[var(--iris)] rotate-180" />
             Approval Queue
           </span>
           {activeConversationId && activeConversationId > 0 ? (
@@ -919,18 +920,18 @@ function ApprovalQueue({
               onClick={() => setFilterToActive((v) => !v)}
               className={`text-[10px] uppercase tracking-widest px-2 py-1 rounded-md border transition-colors ${
                 filterToActive
-                  ? "bg-amber-300/15 text-amber-200 border-amber-300/30"
-                  : "bg-white/[0.03] text-muted-foreground border-white/10 hover:bg-white/[0.06]"
+                  ? "bg-[var(--iris-soft)] text-[var(--iris)] border-[var(--iris)]/25"
+                  : "bg-secondary text-muted-foreground border-border hover:bg-[var(--iris-soft)]/50"
               }`}
             >
               {filterToActive
-                ? `Showing ${customerName ?? "selected"} · click for All`
-                : "Showing All  ·  click to filter"}
+                ? `Showing ${customerName ?? "selected"} · click for All`
+                : "Showing All  ·  click to filter"}
             </button>
           ) : null}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          AI drafts await your <span className="text-emerald-300">Approve</span> or <span className="text-rose-300">Reject</span>. Rejections teach the model.
+          AI drafts await your <span className="text-emerald-700 font-medium">Approve</span> or <span className="text-rose-600 font-medium">Reject</span>. Rejections teach the model.
         </p>
         {filterConvId && profile.data ? (
           <CustomerProfileBadge profile={profile.data} />
@@ -950,7 +951,7 @@ function ApprovalQueue({
                 return (
                   <div
                     key={d.id}
-                    className="rounded-lg border border-amber-300/20 bg-amber-300/[0.04] p-3"
+                    className="rounded-lg border border-[var(--iris)]/20 bg-[var(--iris-soft)]/40 p-3"
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -961,7 +962,7 @@ function ApprovalQueue({
                           {d.intent}
                         </Badge>
                         {d.revision && d.revision > 1 && (
-                          <Badge variant="outline" className="text-[10px] bg-white/5 border-white/10 text-muted-foreground">
+                          <Badge variant="outline" className="text-[10px] bg-secondary border-border text-muted-foreground">
                             rev {d.revision}
                           </Badge>
                         )}
@@ -974,7 +975,7 @@ function ApprovalQueue({
                       To: <span className="text-foreground/80">{conv?.customerName ?? "Unknown"}</span>
                       <span className="ml-2 tabular-nums">{conv?.phone}</span>
                     </div>
-                    <div className="rounded-md bg-black/20 border border-white/5 p-2.5 text-sm text-foreground/90 whitespace-pre-wrap">
+                    <div className="rounded-md bg-background border border-border p-2.5 text-sm text-foreground whitespace-pre-wrap">
                       {d.body}
                     </div>
 
@@ -988,7 +989,7 @@ function ApprovalQueue({
                             value={rejectCategory}
                             onValueChange={(v) => setRejectCategory(v as RejectCategory)}
                           >
-                            <SelectTrigger className="mt-1 bg-white/[0.03] border-white/10 text-sm">
+                            <SelectTrigger className="mt-1 bg-background border-border text-sm">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -1008,12 +1009,12 @@ function ApprovalQueue({
                               ? "Tell the AI exactly what's wrong (required)…"
                               : "Optional: add specifics (e.g., 'price should be $35, not $40')"
                           }
-                          className="bg-white/[0.03] border-white/10 text-sm min-h-[72px]"
+                          className="bg-background border-border text-sm min-h-[72px]"
                         />
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
-                            className="bg-rose-500/20 text-rose-100 border-rose-500/30 hover:bg-rose-500/30 border"
+                            className="bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 border"
                             disabled={
                               reject.isPending ||
                               (rejectCategory === "other" && !rejectReason.trim())
@@ -1034,7 +1035,7 @@ function ApprovalQueue({
                           <Button
                             size="sm"
                             variant="outline"
-                            className="bg-white/[0.03] border-white/10"
+                            className="bg-background border-border text-foreground"
                             onClick={() => {
                               setRejectDraftId(null);
                               setRejectReason("");
@@ -1048,7 +1049,7 @@ function ApprovalQueue({
                       <div className="mt-2 flex items-center gap-2">
                         <Button
                           size="sm"
-                          className="bg-emerald-500/20 text-emerald-100 border-emerald-500/30 hover:bg-emerald-500/30 border"
+                          className="bg-[var(--iris)] text-white hover:bg-[#5a52f0] border-0 shadow-sm shadow-[#635BFF]/30"
                           disabled={approve.isPending}
                           onClick={() => approve.mutate({ draftId: d.id })}
                         >
@@ -1058,7 +1059,7 @@ function ApprovalQueue({
                         <Button
                           size="sm"
                           variant="outline"
-                          className="bg-white/[0.03] border-white/10 hover:border-rose-400/30 hover:bg-rose-500/10"
+                          className="bg-background border-border text-foreground hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
                           onClick={() => {
                             setRejectDraftId(d.id);
                             setRejectReason("");
@@ -1086,10 +1087,10 @@ function RagMemoryPanel() {
   const knowledge = trpc.rag.knowledge.useQuery();
 
   return (
-    <Card className="bg-white/[0.03] border-white/10">
+    <Card className="panel">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 font-display text-lg">
-          <Sparkles className="size-4 text-amber-300" />
+          <Sparkles className="size-4 text-[var(--iris)]" />
           RAG Memory — 3 Tiers
         </CardTitle>
         <p className="text-xs text-muted-foreground">
@@ -1098,22 +1099,22 @@ function RagMemoryPanel() {
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="style">
-          <TabsList className="bg-white/[0.04] border border-white/10">
+          <TabsList className="bg-secondary border border-border">
             <TabsTrigger value="style">
               Approved
-              <Badge className="ml-2 bg-emerald-500/20 text-emerald-200 border-emerald-500/30">
+              <Badge className="ml-2 bg-emerald-50 text-emerald-700 border-emerald-200">
                 {styleExamples.data?.length ?? 0}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="rejections">
               Rejections
-              <Badge className="ml-2 bg-rose-500/20 text-rose-200 border-rose-500/30">
+              <Badge className="ml-2 bg-rose-50 text-rose-700 border-rose-200">
                 {rejections.data?.length ?? 0}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="knowledge">
               Knowledge
-              <Badge className="ml-2 bg-sky-500/20 text-sky-200 border-sky-500/30">
+              <Badge className="ml-2 bg-sky-50 text-sky-700 border-sky-200">
                 {knowledge.data?.length ?? 0}
               </Badge>
             </TabsTrigger>
@@ -1128,12 +1129,12 @@ function RagMemoryPanel() {
               ) : (
                 <div className="space-y-3">
                   {(styleExamples.data ?? []).map((ex) => (
-                    <div key={ex.id} className="rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] p-3 space-y-2">
+                    <div key={ex.id} className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-2">
                       <Badge variant="outline" className={`text-[10px] ${intentTone(ex.intent)}`}>{ex.intent}</Badge>
                       <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
-                      <div className="text-sm text-foreground/90">{ex.customerBody}</div>
-                      <div className="text-[10px] uppercase tracking-widest text-emerald-300/80">Approved DropShop reply</div>
-                      <div className="text-sm text-foreground/90 whitespace-pre-wrap">{ex.approvedReply}</div>
+                      <div className="text-sm text-foreground">{ex.customerBody}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-emerald-700">Approved DropShop reply</div>
+                      <div className="text-sm text-foreground whitespace-pre-wrap">{ex.approvedReply}</div>
                     </div>
                   ))}
                 </div>
@@ -1153,21 +1154,21 @@ function RagMemoryPanel() {
                   {(rejections.data ?? []).map((r) => {
                     const cat = ((r as unknown) as { category?: RejectCategory | null }).category ?? null;
                     return (
-                      <div key={r.id} className="rounded-lg border border-rose-500/15 bg-rose-500/[0.04] p-3 space-y-2">
+                      <div key={r.id} className="rounded-lg border border-rose-200 bg-rose-50/40 p-3 space-y-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Badge variant="outline" className={`text-[10px] ${intentTone(r.intent)}`}>{r.intent}</Badge>
                           {cat && (
-                            <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-200 border-rose-500/30">
+                            <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-200">
                               {REJECT_CATEGORY_LABELS[cat] ?? cat}
                             </Badge>
                           )}
                         </div>
                         <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Customer</div>
-                        <div className="text-sm text-foreground/90">{r.customerBody}</div>
-                        <div className="text-[10px] uppercase tracking-widest text-rose-300/80">Rejected draft</div>
-                        <div className="text-sm text-foreground/90 whitespace-pre-wrap line-through opacity-60">{r.rejectedReply}</div>
-                        <div className="text-[10px] uppercase tracking-widest text-amber-300/80">Manager reason</div>
-                        <div className="text-sm text-amber-100/90">{r.reason}</div>
+                        <div className="text-sm text-foreground">{r.customerBody}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-rose-700">Rejected draft</div>
+                        <div className="text-sm text-foreground/70 whitespace-pre-wrap line-through opacity-70">{r.rejectedReply}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-[var(--iris)]">Manager reason</div>
+                        <div className="text-sm text-foreground">{r.reason}</div>
                       </div>
                     );
                   })}
@@ -1180,12 +1181,12 @@ function RagMemoryPanel() {
             <ScrollArea className="h-[480px] pr-2">
               <div className="space-y-3">
                 {(knowledge.data ?? []).map((k) => (
-                  <div key={k.id} className="rounded-lg border border-sky-500/15 bg-sky-500/[0.04] p-3 space-y-1">
+                  <div key={k.id} className="rounded-lg border border-sky-200 bg-sky-50/40 p-3 space-y-1">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-[10px] bg-sky-500/10 text-sky-200 border-sky-500/30">
+                      <Badge variant="outline" className="text-[10px] bg-sky-50 text-sky-700 border-sky-200">
                         {k.topic}
                       </Badge>
-                      <div className="text-sm font-medium">{k.title}</div>
+                      <div className="text-sm font-medium text-foreground">{k.title}</div>
                     </div>
                     <div className="text-sm text-foreground/80">{k.body}</div>
                   </div>
@@ -1218,9 +1219,9 @@ function TopRejectReasons({
   const total = rejections.length;
 
   return (
-    <div className="rounded-lg border border-amber-300/15 bg-gradient-to-br from-amber-300/[0.06] to-transparent p-3 space-y-2">
+    <div className="rounded-lg border border-[var(--iris)]/20 bg-[var(--iris-soft)]/40 p-3 space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] uppercase tracking-widest text-amber-200/90">
+        <div className="text-[10px] uppercase tracking-widest text-[var(--iris)] font-semibold">
           Top reject reasons
         </div>
         <div className="text-[10px] text-muted-foreground tabular-nums">
@@ -1234,12 +1235,12 @@ function TopRejectReasons({
             REJECT_CATEGORY_LABELS[cat as RejectCategory] ?? cat;
           return (
             <div key={cat} className="flex items-center gap-2">
-              <div className="text-xs w-32 shrink-0 text-foreground/80">
+              <div className="text-xs w-32 shrink-0 text-foreground/85">
                 {label}
               </div>
-              <div className="flex-1 h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+              <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
                 <div
-                  className="h-full bg-amber-300/70"
+                  className="h-full bg-[var(--iris)]"
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -1274,7 +1275,7 @@ function ResetDemoButton() {
     <Button
       variant="outline"
       size="sm"
-      className="bg-white/[0.04] border-white/10 hover:bg-white/[0.08]"
+      className="bg-background border-border text-foreground hover:bg-secondary hover:border-rose-200 hover:text-rose-700"
       onClick={() => {
         if (confirm("Reset demo? This will delete all conversations, drafts, rejections, and AI logs. (Knowledge base is preserved.)")) {
           reset.mutate();
