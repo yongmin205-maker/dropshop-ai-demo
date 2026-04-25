@@ -88,8 +88,29 @@ export function registerTwilioWebhook(app: Express) {
     const body = String(params.Body ?? "").trim();
     const messageSid = String(params.MessageSid ?? "").trim();
 
-    if (!from || !body) {
-      res.status(400).send("Missing From or Body");
+    // ---- MMS attachments (NumMedia, MediaUrl0..N, MediaContentType0..N) ----
+    // These come straight from Twilio so we capture them verbatim. Because
+    // we can't yet do image-based intent classification, the agent treats any
+    // media as an automatic escalation: a manager must look at the photo.
+    const numMedia = Math.min(
+      Number.parseInt(String(params.NumMedia ?? "0"), 10) || 0,
+      10, // sanity cap; Twilio's max is 10 anyway
+    );
+    const attachments: Array<{ url: string; contentType: string }> = [];
+    for (let i = 0; i < numMedia; i += 1) {
+      const url = String(params[`MediaUrl${i}`] ?? "").trim();
+      const ct = String(params[`MediaContentType${i}`] ?? "application/octet-stream").trim();
+      if (url) attachments.push({ url, contentType: ct });
+    }
+    const hasAttachment = attachments.length > 0;
+
+    if (!from) {
+      res.status(400).send("Missing From");
+      return;
+    }
+    // Body may legitimately be empty when the customer just sends a photo.
+    if (!body && !hasAttachment) {
+      res.status(400).send("Missing Body and no media attached");
       return;
     }
     if (!isE164(from)) {
@@ -115,7 +136,27 @@ export function registerTwilioWebhook(app: Express) {
 
       // External I/O (LLM agent) BEFORE the transaction so we don't hold a
       // write txn open while waiting on the model.
-      const result = await draftAgentReply({ phone: from, body });
+      // When media is attached we force the path to escalation — the agent
+      // cannot see the photo and we must not auto-quote alterations from a
+      // text-only context. This avoids the demo's #1 risk: a confidently
+      // wrong $35 quote on a $200 leather repair.
+      const result = hasAttachment
+        ? {
+            intent: "Critical Escalation" as const,
+            reply: null,
+            escalated: true,
+            escalationReason: `Customer sent ${attachments.length} attachment(s) (likely a photo for a quote) — manager must review.`,
+            steps: [
+              {
+                step: "escalated" as const,
+                label: `MMS detected (${attachments.length} media item(s)) — routed to manager`,
+                detail: { attachments },
+              },
+            ],
+            toolContext: {},
+            ragContext: { knowledge: [], styleExamples: [], rejectionLessons: [] },
+          }
+        : await draftAgentReply({ phone: from, body });
 
       // ATOMIC: persist inbound + step logs + intent + (escalation OR draft)
       // commit together so a crash mid-turn cannot orphan rows.
@@ -124,11 +165,12 @@ export function registerTwilioWebhook(app: Express) {
           conversationId: conversation.id,
           direction: "inbound",
           sender: "customer",
-          body,
+          body: body || "[photo]", // never persist empty body
           mode: "live",
           status: "sent",
           twilioSid: messageSid || null,
           correlationId,
+          attachments: hasAttachment ? attachments : null,
         });
         const stepLogs: InsertProcessingLog[] = result.steps.map((step) => ({
           conversationId: conversation.id,

@@ -38,9 +38,24 @@ function hashBagEmbedding(text: string): number[] {
   return vec.map((v) => v / norm);
 }
 
+/**
+ * Set to true the first time we fall back to the deterministic hash-bag
+ * embedding (i.e. Forge call failed or returned junk). Surfaced via
+ * `config.get` so the dashboard can show an honest "semantic search degraded"
+ * banner during the demo.
+ */
+let __embeddingFallbackActive = false;
+export function isEmbeddingFallbackActive(): boolean {
+  return __embeddingFallbackActive;
+}
+
 async function tryForgeEmbedding(text: string): Promise<number[] | null> {
   if (!ENV.forgeApiKey) return null;
   const base = ENV.forgeApiUrl?.replace(/\/$/, "") || "https://forge.manus.im";
+  // Hard 5s timeout: an unbounded embedding call would block every customer
+  // turn behind it (we await this synchronously).
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 5_000);
   try {
     const res = await fetch(`${base}/v1/embeddings`, {
       method: "POST",
@@ -52,6 +67,7 @@ async function tryForgeEmbedding(text: string): Promise<number[] | null> {
         model: "text-embedding-3-small",
         input: text,
       }),
+      signal: ac.signal,
     });
     if (!res.ok) return null;
     const json = (await res.json()) as {
@@ -62,12 +78,21 @@ async function tryForgeEmbedding(text: string): Promise<number[] | null> {
     return null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 export async function embedText(text: string): Promise<number[]> {
   const forge = await tryForgeEmbedding(text);
-  if (forge) return forge;
+  if (forge) {
+    // Forge succeeded — we are *not* in fallback mode for this call. We do not
+    // unset the global flag because once a deployment has started serving
+    // semantically-degraded vectors, future Forge successes still mix with
+    // those rows, and the operator should be told.
+    return forge;
+  }
+  __embeddingFallbackActive = true;
   return hashBagEmbedding(text);
 }
 

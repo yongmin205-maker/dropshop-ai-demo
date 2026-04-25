@@ -108,7 +108,11 @@ export async function classifyIntent(body: string): Promise<Intent> {
   } catch {
     /* fall through */
   }
-  return "Membership & Pricing";
+  // Fail-safe: when classification is uncertain, route to Critical
+  // Escalation. The previous default ('Membership & Pricing') was *fail-open*
+  // — a theft report whose JSON came back malformed could end up answered
+  // as a pricing question. Routing to escalation pages a human instead.
+  return "Critical Escalation";
 }
 
 /* ----- Reply generator with RAG few-shot ----- */

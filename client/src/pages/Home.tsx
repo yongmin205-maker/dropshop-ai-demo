@@ -63,7 +63,9 @@ function intentTone(intent: string | null | undefined) {
 
 export default function Home() {
   const utils = trpc.useUtils();
-  const config = trpc.config.get.useQuery();
+  // Re-poll the live-mode / fallback config every 30s so the UI honestly
+  // reflects toggles made server-side without forcing a hard reload.
+  const config = trpc.config.get.useQuery(undefined, { refetchInterval: 30_000 });
   const conversations = trpc.conversations.list.useQuery();
   const escalations = trpc.escalations.list.useQuery();
 
@@ -166,6 +168,23 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {/* Embedding-degraded banner. Honest disclosure when semantic RAG is
+          running on the deterministic hash-bag fallback (Forge embedding
+          endpoint missing or has failed at least once this process). */}
+      {config.data?.embeddingFallback && (
+        <div className="border-b border-amber-200 bg-amber-50 text-amber-900">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 text-xs sm:text-sm flex items-start gap-2">
+            <span className="mt-0.5">⚠</span>
+            <span>
+              <strong>Semantic search degraded.</strong>{" "}
+              {config.data.embeddingMissingKey
+                ? "Embedding API key not configured — RAG is running on a deterministic hash-bag fallback (lexical overlap only, not true semantics)."
+                : "At least one embedding call has failed in this session — some RAG retrievals are now backed by a deterministic hash-bag fallback. Restart the server after the upstream recovers to clear this notice."}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Preset scenarios bar */}
       <div className="border-b border-border bg-background">
@@ -459,7 +478,8 @@ function PhoneSimulator({
           <Input
             value={draft}
             placeholder="iMessage"
-            onChange={(e) => onDraftChange(e.target.value)}
+            maxLength={500}
+            onChange={(e) => onDraftChange(e.target.value.slice(0, 500))}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

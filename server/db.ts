@@ -13,6 +13,7 @@ import {
   type InsertUser,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { redactPII, redactText } from "./pii";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -171,10 +172,25 @@ export async function appendMessage(value: InsertMessage) {
   return rows[0]!;
 }
 
+/**
+ * Wrap an InsertProcessingLog so its `detail` JSON and `label` text never
+ * persist raw phone numbers, email addresses, full SMS bodies, or street
+ * addresses. The processingLogs table is exposed verbatim through the
+ * dashboard tRPC endpoints, so this is the only place we can enforce the
+ * GDPR/CCPA promise that the audit trail itself is not a PII leak.
+ */
+function sanitizeLog(value: InsertProcessingLog): InsertProcessingLog {
+  return {
+    ...value,
+    label: typeof value.label === "string" ? redactText(value.label, 256) : value.label,
+    detail: value.detail == null ? value.detail : redactPII(value.detail),
+  };
+}
+
 export async function appendProcessingLog(value: InsertProcessingLog) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(processingLogs).values(value);
+  await db.insert(processingLogs).values(sanitizeLog(value));
 }
 
 /** Bulk insert variant used by transactional turn writes. */
@@ -182,16 +198,16 @@ export async function appendProcessingLogs(values: InsertProcessingLog[]) {
   if (values.length === 0) return;
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(processingLogs).values(values);
+  await db.insert(processingLogs).values(values.map(sanitizeLog));
 }
 
 /** Tx-aware variants. */
 export async function appendProcessingLogTx(tx: DbTx, value: InsertProcessingLog) {
-  await tx.insert(processingLogs).values(value);
+  await tx.insert(processingLogs).values(sanitizeLog(value));
 }
 export async function appendProcessingLogsTx(tx: DbTx, values: InsertProcessingLog[]) {
   if (values.length === 0) return;
-  await tx.insert(processingLogs).values(values);
+  await tx.insert(processingLogs).values(values.map(sanitizeLog));
 }
 export async function updateConversationIntentTx(
   tx: DbTx,

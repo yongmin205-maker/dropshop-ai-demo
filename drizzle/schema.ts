@@ -64,6 +64,8 @@ export const messages = mysqlTable(
     correlationId: varchar("correlationId", { length: 64 }),
     /** Captured Twilio API error string when status='failed'. */
     sendError: varchar("sendError", { length: 256 }),
+    /** MMS media URLs (and content types) provided by Twilio for inbound messages. JSON array. */
+    attachments: json("attachments"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   (t) => ({

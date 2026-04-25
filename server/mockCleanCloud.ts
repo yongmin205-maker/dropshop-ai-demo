@@ -144,20 +144,74 @@ export const MEMBERSHIP_INFO = {
   },
 };
 
-let seeded = false;
+let seedOncePromise: Promise<void> | null = null;
 
-export async function ensureSeeded() {
-  if (seeded) return;
-  const db = await getDb();
-  if (!db) return;
+/**
+ * Idempotent + cross-instance-safe seeder.
+ *
+ *   - In-process memoization via `seedOncePromise` collapses concurrent
+ *     callers in the same Node process onto a single seed run.
+ *   - Across instances we rely on the unique indexes (mockCustomers.phone,
+ *     mockOrders.orderNumber) and `onDuplicateKeyUpdate` so two pods racing
+ *     to insert the same seed row both succeed without exploding. Without
+ *     this, the loser of the race would throw a duplicate-key error and
+ *     the seeder would be left half-applied for the lifetime of the pod.
+ *
+ * `mockPriceList` has no natural unique key today, so we guard it with a
+ * pre-check + bulk insert under the same memoized promise. (Adding a
+ * unique index there would change app-level semantics, so we keep the
+ * pre-check pattern for now.)
+ */
+export async function ensureSeeded(): Promise<void> {
+  if (seedOncePromise) return seedOncePromise;
+  seedOncePromise = (async () => {
+    const db = await getDb();
+    if (!db) return;
 
-  const existing = await db.select().from(mockCustomers).limit(1);
-  if (existing.length === 0) {
-    await db.insert(mockCustomers).values(SEED_CUSTOMERS);
-    await db.insert(mockOrders).values(SEED_ORDERS);
-    await db.insert(mockPriceList).values(SEED_PRICES);
-  }
-  seeded = true;
+    // Customers: per-row upsert keeps the seed row stable across deploys.
+    for (const c of SEED_CUSTOMERS) {
+      await db
+        .insert(mockCustomers)
+        .values(c)
+        .onDuplicateKeyUpdate({
+          set: {
+            name: c.name,
+            membership: c.membership,
+            address: c.address,
+            notes: c.notes,
+          },
+        });
+    }
+
+    // Orders: same pattern, keyed by orderNumber.
+    for (const o of SEED_ORDERS) {
+      await db
+        .insert(mockOrders)
+        .values(o)
+        .onDuplicateKeyUpdate({
+          set: {
+            customerPhone: o.customerPhone,
+            status: o.status,
+            itemsSummary: o.itemsSummary,
+            totalCents: o.totalCents,
+            etaText: o.etaText,
+          },
+        });
+    }
+
+    // Price list: no natural unique key — only insert if empty so we don't
+    // duplicate seed rows on every boot.
+    const existingPrices = await db.select().from(mockPriceList).limit(1);
+    if (existingPrices.length === 0) {
+      await db.insert(mockPriceList).values(SEED_PRICES);
+    }
+  })().catch((err) => {
+    // Reset memo so the next caller can retry; otherwise a transient DB
+    // hiccup at boot would leave the process permanently un-seeded.
+    seedOncePromise = null;
+    throw err;
+  });
+  return seedOncePromise;
 }
 
 /* ----- Tool-call helpers (these mirror what a CleanCloud API client would do) ----- */

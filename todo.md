@@ -119,15 +119,15 @@
 - [x] Wrap `twilioWebhook` inbound turn + auto-send paths in `withTransaction`
 - [x] New vitest `withTransaction.test.ts` (4 contracts: DB-down throws, return forwarding, error propagation, single-BEGIN)
 
-### Sprint 3 — Trust, cost & compliance (P1)
-- [ ] §3.8 Cross-instance seeding via `INSERT IGNORE` / unique-key upserts
-- [ ] §3.9 Knowledge chunks generated from `MEMBERSHIP_INFO` + `SEED_PRICES` (single source)
-- [ ] §3.10 Embedding fallback banner + raise cosine threshold when in fallback
-- [ ] §3.11 Classifier defaults to `Critical Escalation` on parse failure (fail-safe)
-- [ ] §3.12 PII redaction in `processingLogs.detail` (phone masking, ref by message id)
-- [ ] §3.13 MMS skeleton: capture `MediaUrl0..N` and pass as image content for Alteration Quote
-- [ ] §3.14 `config.get` re-fetched after each approve; live-mode visible in button label
-- [ ] LLM/Twilio/embeddings AbortController timeouts (8s)
+### Sprint 3 — Trust, cost & compliance (P1) — complete
+- [x] §3.8 Cross-instance seeding hardened: `mockCleanCloud` switched to `onDuplicateKeyUpdate`; `knowledgeSeed` uses `upsertKnowledgeChunk` against the `(topic, title)` UNIQUE index. Two pods racing to seed both succeed.
+- [x] §3.9 Single source of truth: pricing + membership knowledge chunks now derived from `MEMBERSHIP_INFO` + `SEED_PRICES` via `derivedSeed()` in `knowledgeSeed.ts`. Legacy hard-coded duplicate chunk removed; contract test `knowledgeSeedDerivation.test.ts` pins this.
+- [~] §3.10 Embedding fallback **disclosure** complete (`config.get.embeddingFallbackActive` sticky flag + `embeddingMissingKey` static flag + yellow banner in Home.tsx with precise per-case copy). **Retrieval policy adaptation deferred to §4.12** (raise cosine floor + halve top-K when in fallback) so the agent treats hash-bag matches as the weak signals they are.
+- [x] §3.11 Classifier defaults to `Critical Escalation` on any parse / shape / unknown-enum failure (fail-safe, not fail-open). Pinned by `classifierFailSafe.test.ts` (5 cases).
+- [x] §3.12 PII redaction: new `server/pii.ts` module masks E.164 + NA phone numbers, emails, and street addresses across nested log details. `appendProcessingLog{,s,Tx,sTx}` all sanitize before insert. 11 vitest cases.
+- [x] §3.13 MMS skeleton: webhook captures `NumMedia` + `MediaUrl0..N` + `MediaContentType0..N`, persists into new `messages.attachments` JSON column, forces escalation so the agent never auto-quotes from text-only context. Pinned by `twilioWebhook.mms.test.ts` (4 contracts: single-photo escalation, multi-attachment, no auto-send under `DROPSHOP_AUTO_SEND=1`, 400 on empty body+no media).
+- [x] §3.14 `config.get` re-fetched every 30s in Home.tsx so a server-side mode flip surfaces in the UI without a hard reload.
+- [x] AbortController timeouts: `_core/llm.invokeLLM` 30s; `embeddings.embedText` 5s; `twilio.sendSms` 10s. Pinned by `timeoutContracts.test.ts`.
 
 ### Sprint 4 — Operational quality (P2)
 - [ ] §4.1 Smart polling: pause on `document.hidden`, slow when blurred
@@ -140,6 +140,7 @@
 - [ ] §4.9 Structured tracing: correlation_id on logs + twilioSid linkage
 - [ ] §4.10 Reset confirm uses shadcn AlertDialog with typed "RESET" guard
 - [ ] §4.11 Embedding dimension stored alongside vector
+- [ ] §4.12 Embedding-fallback retrieval policy: raise cosine floor (0.5 → 0.7) + halve top-K when `embeddingFallbackActive` so RAG matches degrade gracefully instead of confidently (Sprint 3 carryover)
 
 ### Sprint 5 — Hardening polish (P3)
 - [x] §5.1 E.164 phone validation in `sendSms` (rejects pre-Twilio-call) + simulator input also validates

@@ -48,7 +48,7 @@ import {
   withTransaction,
 } from "./db";
 import type { InsertProcessingLog } from "../drizzle/schema";
-import { embedText } from "./embeddings";
+import { embedText, isEmbeddingFallbackActive } from "./embeddings";
 import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
@@ -90,7 +90,16 @@ export const appRouter = router({
       liveMode: isLiveMode(),
       twilioPhone: process.env.TWILIO_PHONE_NUMBER ?? null,
       autoSend: process.env.DROPSHOP_AUTO_SEND === "1",
-      embeddingFallback: !process.env.BUILT_IN_FORGE_API_KEY,
+      // Two flavors of "embedding degraded":
+      //   - `embeddingMissingKey`: no Forge key, so we *will* fall back. Static.
+      //   - `embeddingFallbackActive`: at least one runtime call already fell
+      //     back to the deterministic hash-bag (semantic search degraded for
+      //     the rest of this process's life). Dynamic, set by embeddings.ts.
+      embeddingMissingKey: !process.env.BUILT_IN_FORGE_API_KEY,
+      embeddingFallbackActive: isEmbeddingFallbackActive(),
+      // Backwards-compatible alias for the existing client.
+      embeddingFallback:
+        !process.env.BUILT_IN_FORGE_API_KEY || isEmbeddingFallbackActive(),
       allowDemoReset: ALLOW_DEMO_RESET,
     })),
   }),
