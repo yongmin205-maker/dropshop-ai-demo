@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerTwilioWebhook } from "../twilioWebhook";
+import { requireSameOrigin } from "../originGuard";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -38,9 +39,12 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerTwilioWebhook(app);
-  // tRPC API
+  // tRPC API — §5.10 require same-origin / allow-listed Origin on all
+  // state-changing requests so a malicious site cannot piggy-back on the
+  // operator's session cookie.
   app.use(
     "/api/trpc",
+    requireSameOrigin,
     createExpressMiddleware({
       router: appRouter,
       createContext,

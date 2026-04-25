@@ -50,6 +50,15 @@ export function smsSegmentCount(body: string): number {
 
 const TWILIO_TIMEOUT_MS = 8_000;
 
+// §5.2 Hard cap on outbound SMS segments per send. Defends against (a) a
+// hallucinated 600-character agent reply that would silently bill 4+ segments,
+// (b) a malicious / accidental approve of a giant draft. Override via
+// `MAX_SMS_SEGMENTS` env if a campaign legitimately needs more.
+const MAX_SMS_SEGMENTS = Math.max(
+  1,
+  Number(process.env.MAX_SMS_SEGMENTS ?? 4),
+);
+
 export type SendResult =
   | { ok: true; sid: string }
   | { ok: false; error: string };
@@ -63,6 +72,13 @@ export async function sendSms(to: string, body: string): Promise<SendResult> {
   }
   if (!body || body.trim().length === 0) {
     return { ok: false, error: "Empty SMS body" };
+  }
+  const segs = smsSegmentCount(body);
+  if (segs > MAX_SMS_SEGMENTS) {
+    return {
+      ok: false,
+      error: `SMS too long: ${segs} segments (max ${MAX_SMS_SEGMENTS}). Shorten the reply or raise MAX_SMS_SEGMENTS.`,
+    };
   }
   const sid = process.env.TWILIO_ACCOUNT_SID!;
   const token = process.env.TWILIO_AUTH_TOKEN!;

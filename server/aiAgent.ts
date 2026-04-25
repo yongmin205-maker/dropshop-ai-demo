@@ -77,7 +77,20 @@ Classify the customer's SMS into EXACTLY ONE of these intents:
 - "Membership & Pricing" — questions about regular prices, member rates, plans, discounts, billing.
 - "Critical Escalation" — lost item, theft suspicion, damage, anger, refund demand, legal threat, CCTV evidence, or anything that should NEVER be auto-answered by a bot.
 
-Be conservative: if a message reports anything missing, damaged, stolen, or includes accusatory tone, classify as "Critical Escalation".`;
+Be conservative: if a message reports anything missing, damaged, stolen, or includes accusatory tone, classify as "Critical Escalation".
+
+Few-shot examples (study these before classifying):
+- "Hey can you pick up my laundry tomorrow at 8am?" -> Pickup Request
+- "Ready for pickup, same address as before" -> Pickup Request
+- "Where is my order? It's been 3 days" -> ETA/Order Status
+- "When will my dry cleaning be done" -> ETA/Order Status
+- "How much to fix a broken zipper on a leather jacket?" -> Alteration Quote
+- "Quote for hemming dress pants?" -> Alteration Quote
+- "What does the gold membership include" -> Membership & Pricing
+- "How much for shirts? Are members cheaper" -> Membership & Pricing
+- "My $4000 watch was in the suit pocket and now it's GONE" -> Critical Escalation
+- "You ruined my wedding dress, I want a refund and to speak to the owner" -> Critical Escalation
+- "Where's my Rolex" -> Critical Escalation`;
 
 export async function classifyIntent(body: string): Promise<Intent> {
   const res = await invokeLLM({
@@ -303,6 +316,27 @@ export async function draftAgentReply(opts: {
       : `getCustomerByPhone(${opts.phone}) → not found`,
     detail: toolContext.customer,
   });
+
+  // §5.4 Server-side pickup guard. The agent must never auto-confirm a pickup
+  // for a phone number it cannot recognize — that's how scammers, wrong numbers,
+  // or accidental texts get free service. Force an escalation so a human eyes it.
+  if (intent === "Pickup Request" && !customer) {
+    const reason = "Pickup request from unknown phone — manager must verify before scheduling.";
+    steps.push({
+      step: "escalated",
+      label: reason,
+      detail: { phone: opts.phone, body: opts.body, reason: "unknown_phone_pickup" },
+    });
+    return {
+      intent,
+      reply: null,
+      escalated: true,
+      escalationReason: reason,
+      steps,
+      toolContext,
+      ragContext: { knowledge: [], styleExamples: [], rejectionLessons: [] },
+    };
+  }
 
   if (intent === "ETA/Order Status" || intent === "Pickup Request") {
     const orders = customer ? await getOrdersByPhone(opts.phone) : [];

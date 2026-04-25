@@ -83,17 +83,59 @@ async function tryForgeEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
+/**
+ * §5.12 LRU cache for embedText. Same input → same vector, so we cache by
+ * sha256(text) to (a) collapse hot-path duplicates inside one customer turn
+ * (e.g. classifier + retrieval often re-embed the same body) and (b) save real
+ * money on the upstream embeddings API.
+ *
+ * Cap: 1000 entries (~1MB at 1536 floats * 8B). Eviction is plain insertion-
+ * order LRU — Map iteration order is insertion order in JS, so deleting and
+ * re-inserting bumps a key to most-recently-used.
+ */
+import { createHash } from "node:crypto";
+const _embedCache = new Map<string, number[]>();
+const EMBED_CACHE_MAX = 1000;
+function embedKey(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+export function _embedCacheStats() {
+  return { size: _embedCache.size, max: EMBED_CACHE_MAX };
+}
+export function _resetEmbedCacheForTests() {
+  _embedCache.clear();
+}
+
 export async function embedText(text: string): Promise<number[]> {
+  const key = embedKey(text);
+  const cached = _embedCache.get(key);
+  if (cached) {
+    // Bump to most-recently-used position.
+    _embedCache.delete(key);
+    _embedCache.set(key, cached);
+    return cached;
+  }
+
   const forge = await tryForgeEmbedding(text);
+  let vec: number[];
   if (forge) {
     // Forge succeeded — we are *not* in fallback mode for this call. We do not
     // unset the global flag because once a deployment has started serving
     // semantically-degraded vectors, future Forge successes still mix with
     // those rows, and the operator should be told.
-    return forge;
+    vec = forge;
+  } else {
+    __embeddingFallbackActive = true;
+    vec = hashBagEmbedding(text);
   }
-  __embeddingFallbackActive = true;
-  return hashBagEmbedding(text);
+
+  _embedCache.set(key, vec);
+  if (_embedCache.size > EMBED_CACHE_MAX) {
+    // Evict the oldest (first-inserted) key.
+    const oldest = _embedCache.keys().next().value;
+    if (oldest !== undefined) _embedCache.delete(oldest);
+  }
+  return vec;
 }
 
 export function cosineSim(a: number[], b: number[]): number {

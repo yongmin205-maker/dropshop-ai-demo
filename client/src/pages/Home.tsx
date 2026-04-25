@@ -202,7 +202,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <LiveModeBadge live={!!config.data?.liveMode} phone={config.data?.twilioPhone ?? null} />
-            <ResetDemoButton />
+            <ResetDemoButton onReset={() => setActiveConvId(null)} />
             <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-background border-border hover:bg-secondary text-foreground">
               <ArrowUpRight className="size-4 mr-1.5" />
               Pitch deck
@@ -530,6 +530,7 @@ function PhoneSimulator({
             }}
             className="bg-white border-zinc-200 text-zinc-900 rounded-full"
             disabled={isSending}
+            aria-label="Customer SMS body"
           />
           <Button
             size="icon"
@@ -842,6 +843,16 @@ function PendingDraftsBadge() {
     refetchInterval: useVisiblePollInterval(2500),
   });
   const count = pending.data?.length ?? 0;
+  // §5.6 Surface the pending-approval count in the browser tab title so the
+  // owner notices new drafts even when the tab is in the background.
+  // We restore the original title on unmount so this hook is safe to remove.
+  useEffect(() => {
+    const original = document.title;
+    document.title = count > 0 ? `(${count}) ${original.replace(/^\(\d+\)\s*/, "")}` : original.replace(/^\(\d+\)\s*/, "");
+    return () => {
+      document.title = original.replace(/^\(\d+\)\s*/, "");
+    };
+  }, [count]);
   if (count === 0) return null;
   return (
     <Badge className="ml-2 bg-[var(--iris-soft)] text-[var(--iris)] border-[var(--iris)]/25">
@@ -1353,7 +1364,7 @@ function TopRejectReasons({
 }
 
 
-function ResetDemoButton() {
+function ResetDemoButton({ onReset }: { onReset?: () => void } = {}) {
   const utils = trpc.useUtils();
   // §4.10 Typed RESET guard — the destructive CTA stays disabled until the
   // operator literally types `RESET`. Belt-and-suspenders against accidental
@@ -1374,6 +1385,10 @@ function ResetDemoButton() {
       toast.success("Demo reset — all conversations cleared");
       setConfirmText("");
       setOpen(false);
+      // §5.11 Drop the stale activeConvId selection now that all conversations
+      // are gone — otherwise the Approval Queue keeps the old filter and the
+      // Customer Profile badge points at a deleted row.
+      onReset?.();
     },
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
   });

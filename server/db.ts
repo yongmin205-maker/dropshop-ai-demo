@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
 import {
   conversations,
   escalations,
@@ -16,14 +17,30 @@ import {
 import { ENV } from "./_core/env";
 import { redactPII, redactText } from "./pii";
 
-let _db: ReturnType<typeof drizzle> | null = null;
+// §5.9 Use a real long-lived mysql2 pool (instead of `drizzle(connectionString)`
+// which spins up a fresh connection per call) with keep-alive enabled. This
+// prevents TiDB Serverless from killing idle connections after ~10 min, which
+// was occasionally producing "Can't add new command when connection is in
+// closed state" / ECONNRESET noise after long demo sessions.
+let _pool: mysql.Pool | null = null;
+let _db: MySql2Database | null = null;
 
-export async function getDb() {
+export async function getDb(): Promise<MySql2Database | null> {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _pool = mysql.createPool({
+        uri: process.env.DATABASE_URL,
+        connectionLimit: 8,
+        waitForConnections: true,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10_000, // 10s
+        idleTimeout: 60_000, // recycle idle conns every minute
+      });
+      _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
+      _pool = null;
       _db = null;
     }
   }

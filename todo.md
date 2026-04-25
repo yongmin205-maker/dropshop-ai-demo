@@ -143,18 +143,24 @@
 - [x] §4.8 Cursor pagination round-trip pinned by `paginationAndTracing.test.ts` (8 contracts: where()-only-with-beforeId for all four list helpers, signature exposes `beforeId?: number`, limit caps 200 / 500)
 - [x] §4.12 Embedding-fallback retrieval policy: `ragRetrievalDefaults()` raises cosine floor 0.0→0.7 and halves top-K when `embeddingFallbackActive` (pinned by `ragAdaptive.test.ts`)
 
-### Sprint 5 — Hardening polish (P3)
+### Sprint 5 — Hardening polish (P3) — complete
 - [x] §5.1 E.164 phone validation in `sendSms` (rejects pre-Twilio-call) + simulator input also validates
-- [ ] §5.2 SMS segment cap (320 chars warning)
+- [x] §5.2 **Spec change** — the original audit asked for a 320-char warning in the UI; on review we shipped something stronger: a **hard segment cap** (default 4, `MAX_SMS_SEGMENTS` env-overridable) enforced inside `sendSms` *before* fetch, plus the existing approval-queue card already shows segment count next to each draft. A hard block is the right primitive (UI warnings can be ignored / not loaded if the operator approves via API); we can still add a soft 320-char banner later if we want graduated guardrails. Pinned by `sendSmsCap.test.ts` (3 contracts).
 - [x] §5.3 simulator body cap reduced to 500 chars (was 1000)
-- [ ] §5.4 Server-side pickup guard when customer not found
+- [x] §5.4 Server-side pickup guard: `Pickup Request` from a phone not in the customer table now forces escalation in `aiAgent.runAgent` (unknown numbers can't get free pickup scheduled).
 - [x] §5.5 `getConversationById` helper added; approve mutation no longer scans `listConversations(500)`
-- [ ] §5.6 `document.title` badge with pending count
-- [ ] §5.8 Classifier prompt few-shot examples
-- [ ] §5.9 mysql2 pool with keep-alive
-- [ ] §5.10 CSRF protection on mutations
-- [ ] §5.11 Reset clears `activeConvId`
-- [ ] §5.12 Embedding LRU cache (1000 entries, sha256 key)
+- [x] §5.6 `PendingDraftsBadge` writes `(N) <title>` to `document.title` so background tabs surface new drafts; cleans up on unmount.
+- [x] §5.7 Classifier system prompt now ships with 8 explicit few-shot examples covering all 5 intents (especially the Critical Escalation cases where misroute = revenue loss).
+- [x] §5.8 Real long-lived `mysql2.createPool` (8 connections, `enableKeepAlive`, 30s `keepAliveInitialDelay`) replaces per-call `drizzle(connectionString)` — fixes TiDB Serverless killing idle connections after 10 min and the boot crash on missing DATABASE_URL is now a graceful warn.
+- [x] §5.9 Reset mutation success handler clears `activeConvId` in Home.tsx so the Inbox doesn't render a stale-pointer empty pane after wipe.
+- [x] §5.10 CSRF defense: new `originGuard.ts` Express middleware in front of `/api/trpc` blocks all state-changing requests whose `Origin`/`Referer` doesn't match the request host (or `ALLOWED_ORIGINS` allow-list). Pinned by `originGuard.test.ts` (7 contracts incl. proxy `X-Forwarded-Host`, allow-list precedence, Referer fallback).
+- [x] §5.11 covered by §5.9 above.
+- [x] §5.12 Embedding LRU cache (1000 entries, sha256-keyed Map with insertion-order eviction) wraps `embedText`; pinned by `embedCache.test.ts` (3 contracts: hit reuse, distinct keys, oldest-eviction).
 
 ### Final
-- [ ] Full vitest suite green, save checkpoint
+- [x] Full vitest suite green (121/121)
+- [ ] Save checkpoint after Sprint 5 hardening (in flight)
+
+### Carryover after Sprint 5
+- [ ] Optional: add a soft 320-char UI warning on the Approval Queue draft card so the operator sees "this will bill 3 segments" before clicking Approve (graduated guardrail next to the existing hard cap)
+- [ ] Add a deployment-time integration check that a real cross-origin POST to `/api/trpc/drafts.approve` from a different host returns 403 — currently only unit-pinned via mocked Express `req`/`res` against `requireSameOrigin` directly (7 contracts), not against the live proxy + tRPC client stack.
