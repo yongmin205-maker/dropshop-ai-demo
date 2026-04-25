@@ -122,7 +122,7 @@
 ### Sprint 3 — Trust, cost & compliance (P1) — complete
 - [x] §3.8 Cross-instance seeding hardened: `mockCleanCloud` switched to `onDuplicateKeyUpdate`; `knowledgeSeed` uses `upsertKnowledgeChunk` against the `(topic, title)` UNIQUE index. Two pods racing to seed both succeed.
 - [x] §3.9 Single source of truth: pricing + membership knowledge chunks now derived from `MEMBERSHIP_INFO` + `SEED_PRICES` via `derivedSeed()` in `knowledgeSeed.ts`. Legacy hard-coded duplicate chunk removed; contract test `knowledgeSeedDerivation.test.ts` pins this.
-- [~] §3.10 Embedding fallback **disclosure** complete (`config.get.embeddingFallbackActive` sticky flag + `embeddingMissingKey` static flag + yellow banner in Home.tsx with precise per-case copy). **Retrieval policy adaptation deferred to §4.12** (raise cosine floor + halve top-K when in fallback) so the agent treats hash-bag matches as the weak signals they are.
+- [x] §3.10 Embedding fallback fully addressed: (a) **disclosure** — `config.get.embeddingFallbackActive` sticky + `embeddingMissingKey` static + yellow banner in Home.tsx with precise per-case copy; (b) **retrieval policy adaptation** — `ragRetrievalDefaults()` raises cosine floor 0.0→0.7 and halves top-K when in fallback (§4.12, pinned by `ragAdaptive.test.ts`).
 - [x] §3.11 Classifier defaults to `Critical Escalation` on any parse / shape / unknown-enum failure (fail-safe, not fail-open). Pinned by `classifierFailSafe.test.ts` (5 cases).
 - [x] §3.12 PII redaction: new `server/pii.ts` module masks E.164 + NA phone numbers, emails, and street addresses across nested log details. `appendProcessingLog{,s,Tx,sTx}` all sanitize before insert. 11 vitest cases.
 - [x] §3.13 MMS skeleton: webhook captures `NumMedia` + `MediaUrl0..N` + `MediaContentType0..N`, persists into new `messages.attachments` JSON column, forces escalation so the agent never auto-quotes from text-only context. Pinned by `twilioWebhook.mms.test.ts` (4 contracts: single-photo escalation, multi-attachment, no auto-send under `DROPSHOP_AUTO_SEND=1`, 400 on empty body+no media).
@@ -130,17 +130,18 @@
 - [x] AbortController timeouts: `_core/llm.invokeLLM` 30s; `embeddings.embedText` 5s; `twilio.sendSms` 10s. Pinned by `timeoutContracts.test.ts`.
 
 ### Sprint 4 — Operational quality (P2)
-- [ ] §4.1 Smart polling: pause on `document.hidden`, slow when blurred
-- [ ] §4.2 Optimistic updates on Approve/Reject
-- [ ] §4.3 Cursor pagination on `list*` endpoints (conversations/styleExamples/rejections/knowledge)
-- [ ] §4.4 Cap RAG topK candidate pool to recent N
-- [ ] §4.5 `getCustomerProfile` uses `inArray` instead of in-memory filter
-- [ ] §4.6 `searchPrice` switched to `eq(category)` for known categories
-- [ ] §4.7 Reject supersedes any other pending drafts for same `inboundMessageId`
-- [ ] §4.9 Structured tracing: correlation_id on logs + twilioSid linkage
-- [ ] §4.10 Reset confirm uses shadcn AlertDialog with typed "RESET" guard
-- [ ] §4.11 Embedding dimension stored alongside vector
-- [ ] §4.12 Embedding-fallback retrieval policy: raise cosine floor (0.5 → 0.7) + halve top-K when `embeddingFallbackActive` so RAG matches degrade gracefully instead of confidently (Sprint 3 carryover)
+- [x] §4.1 Smart polling: `useVisiblePollInterval` pauses every poll when `document.hidden` (saves CPU + server cost overnight)
+- [x] §4.2 Optimistic updates on Approve/Reject (instant queue removal + rollback on error + final invalidate)
+- [x] §4.3 Cursor pagination on `listConversations` / `listKnowledge` / `listStyleExamples` / `listRejections` (`afterId` + capped limit)
+- [x] §4.4 RAG candidate pool capped before topK (recent 200 only) so cosine cost is bounded
+- [x] §4.5 `getCustomerProfile` uses `inArray(rejections.draftId, draftIds)` (N+1 eliminated, pinned by `customerProfile.test.ts`)
+- [x] §4.6 `searchPrice` prefers `eq(category)` for known categories with substring fallback (pinned by `searchPrice.test.ts`)
+- [x] §4.7 Reject calls `supersedeOtherPendingDraftsTx` for the same `inboundMessageId` (pinned by `correlationAndSupersede.test.ts`)
+- [x] §4.9 Structured tracing: every customer turn shares one `correlationId` across `messages.correlationId` + every `processingLogs.correlationId` row (pinned by `correlationAndSupersede.test.ts`); webhook ties it to `twilioSid` for cross-system trace joins
+- [x] §4.10 Reset confirm uses shadcn `AlertDialog` + **typed RESET guard** (user must type `RESET` before destructive button enables, prevents accidental click during demo or one-click cascade)
+- [x] §4.11 Embedding dimension persisted alongside vector (`embeddingDim` column written by every insert path — styleExamples, rejections, knowledgeChunks)
+- [x] §4.8 Cursor pagination round-trip pinned by `paginationAndTracing.test.ts` (8 contracts: where()-only-with-beforeId for all four list helpers, signature exposes `beforeId?: number`, limit caps 200 / 500)
+- [x] §4.12 Embedding-fallback retrieval policy: `ragRetrievalDefaults()` raises cosine floor 0.0→0.7 and halves top-K when `embeddingFallbackActive` (pinned by `ragAdaptive.test.ts`)
 
 ### Sprint 5 — Hardening polish (P3)
 - [x] §5.1 E.164 phone validation in `sendSms` (rejects pre-Twilio-call) + simulator input also validates

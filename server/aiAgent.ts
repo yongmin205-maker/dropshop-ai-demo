@@ -13,7 +13,7 @@ import {
   listStyleExamples,
   listStyleExamplesByPhone,
 } from "./db";
-import { embedText, topK } from "./embeddings";
+import { embedText, topK, ragRetrievalDefaults } from "./embeddings";
 
 /* ============================================================
  * AI Agent — intent classification + RAG-aware draft generation
@@ -174,9 +174,12 @@ export async function retrieveRag(opts: {
     opts.phone ? listStyleExamplesByPhone(opts.phone) : Promise.resolve([]),
   ]);
   const queryEmb = await embedText(opts.body);
+  // Adaptive retrieval: when the embedding service is in fallback mode
+  // (lexical hash-bag vectors), we tighten both top-K and the cosine floor so
+  // we don't flood the prompt with confident-looking junk matches.
+  const policy = ragRetrievalDefaults();
 
-  const kTop = topK(queryEmb, allKnowledge, 3)
-    .filter((r) => r.score > 0)
+  const kTop = topK(queryEmb, allKnowledge, policy.topKKnowledge, { minScore: policy.minScore })
     .map((r) => ({ title: r.title, body: r.body, score: r.score }));
 
   // Prefer this customer's own approved replies first (true personalization),
@@ -188,8 +191,7 @@ export async function retrieveRag(opts: {
       : sameIntentExamples.length >= 2
         ? sameIntentExamples
         : allExamples;
-  const eTop = topK(queryEmb, examplePool, 3)
-    .filter((r) => r.score > 0)
+  const eTop = topK(queryEmb, examplePool, policy.topKExamples, { minScore: policy.minScore })
     .map((r) => ({
       intent: r.intent,
       customerBody: r.customerBody,
@@ -197,8 +199,7 @@ export async function retrieveRag(opts: {
       score: r.score,
     }));
 
-  const rTop = topK(queryEmb, allRejections, 2)
-    .filter((r) => r.score > 0)
+  const rTop = topK(queryEmb, allRejections, policy.topKRejections, { minScore: policy.minScore })
     .map((r) => ({
       intent: r.intent,
       rejectedReply: r.rejectedReply,

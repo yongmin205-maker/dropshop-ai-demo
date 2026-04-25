@@ -111,16 +111,42 @@ export function cosineSim(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+/**
+ * Cosine top-K with an optional `minScore` floor. Callers should pass the
+ * threshold returned by `ragRetrievalDefaults()` so retrieval automatically
+ * tightens when the embedding service is in fallback mode (lexical hash-bag
+ * vectors are noisier and produce more spurious near-matches).
+ */
 export function topK<T extends { embedding: unknown }>(
   query: number[],
   items: T[],
-  k: number
+  k: number,
+  options: { minScore?: number } = {},
 ): Array<T & { score: number }> {
+  const min = options.minScore ?? 0;
   return items
     .map((it) => {
       const emb = Array.isArray(it.embedding) ? (it.embedding as number[]) : [];
       return { ...it, score: cosineSim(query, emb) };
     })
+    .filter((it) => it.score > min)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+}
+
+/**
+ * Returns the retrieval policy the agent should use right now.
+ *
+ * - **Healthy mode** (semantic embeddings): generous top-K (3) and a permissive
+ *   floor (>0), letting weak-but-real matches surface.
+ * - **Fallback mode** (hash-bag vectors): cut top-K in half (the matches are
+ *   noisier so we don't want to flood the prompt with junk) and raise the
+ *   cosine floor to 0.7 so only confident lexical overlaps make it through.
+ *   This is the §4.12 "degrade gracefully instead of confidently" rule.
+ */
+export function ragRetrievalDefaults(): { topKKnowledge: number; topKExamples: number; topKRejections: number; minScore: number; fallback: boolean } {
+  if (__embeddingFallbackActive) {
+    return { topKKnowledge: 2, topKExamples: 2, topKRejections: 1, minScore: 0.7, fallback: true };
+  }
+  return { topKKnowledge: 3, topKExamples: 3, topKRejections: 2, minScore: 0, fallback: false };
 }

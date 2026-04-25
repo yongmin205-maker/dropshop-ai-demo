@@ -1,6 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -26,8 +37,39 @@ import {
   Wifi,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
+
+/**
+ * Subscribes to document visibility and returns a polling interval that
+ * auto-pauses while the tab is hidden.
+ *
+ * - Active tab        → returns `activeMs` (e.g. 2_000ms)
+ * - Hidden tab        → returns `false` (react-query interprets as "don't poll")
+ * - Backgrounded > 60s→ still false; first refocus triggers an immediate refetch
+ *
+ * Saves both client CPU and server cost — the demo had ~5 timers each polling
+ * every 2–2.5s, so a closed-laptop overnight could cost thousands of empty
+ * round-trips per pane. (§4.1)
+ */
+function useVisiblePollInterval(activeMs: number): number | false {
+  const isVisible = useSyncExternalStore(
+    (cb) => {
+      const handler = () => cb();
+      document.addEventListener("visibilitychange", handler);
+      window.addEventListener("focus", handler);
+      window.addEventListener("blur", handler);
+      return () => {
+        document.removeEventListener("visibilitychange", handler);
+        window.removeEventListener("focus", handler);
+        window.removeEventListener("blur", handler);
+      };
+    },
+    () => (typeof document !== "undefined" ? !document.hidden : true),
+    () => true,
+  );
+  return isVisible ? activeMs : false;
+}
 
 type AgentStep = {
   step: "intent_detected" | "mock_api_called" | "response_drafted" | "sent" | "escalated" | "send_failed";
@@ -85,11 +127,11 @@ export default function Home() {
   const effectiveConvId = activeConvId ?? conversations.data?.[0]?.id ?? -1;
   const messages = trpc.conversations.messages.useQuery(
     { conversationId: effectiveConvId },
-    { enabled: effectiveConvId > 0, refetchInterval: 2000 },
+    { enabled: effectiveConvId > 0, refetchInterval: useVisiblePollInterval(2000) },
   );
   const logs = trpc.conversations.logs.useQuery(
     { conversationId: effectiveConvId },
-    { enabled: effectiveConvId > 0, refetchInterval: 2000 },
+    { enabled: effectiveConvId > 0, refetchInterval: useVisiblePollInterval(2000) },
   );
 
   const sendMutation = trpc.simulator.sendMessage.useMutation({
@@ -797,7 +839,7 @@ function EscalationsPanel({
 
 function PendingDraftsBadge() {
   const pending = trpc.drafts.listPending.useQuery(undefined, {
-    refetchInterval: 2500,
+    refetchInterval: useVisiblePollInterval(2500),
   });
   const count = pending.data?.length ?? 0;
   if (count === 0) return null;
@@ -881,7 +923,7 @@ function ApprovalQueue({
       : undefined;
   const pending = trpc.drafts.listPending.useQuery(
     filterConvId ? { conversationId: filterConvId } : undefined,
-    { refetchInterval: 2500 },
+    { refetchInterval: useVisiblePollInterval(2500) },
   );
   const profile = trpc.customers.profile.useQuery(
     { conversationId: filterConvId ?? 0 },
@@ -893,29 +935,63 @@ function ApprovalQueue({
   const [rejectReason, setRejectReason] = useState("");
   const [rejectCategory, setRejectCategory] = useState<RejectCategory>("tone_too_formal");
 
+  // §4.2 Optimistic updates: Approve/Reject feel instantaneous because we
+  // remove the affected draft from the cached `listPending` array immediately
+  // (the canonical "approve disappears from queue right now") and roll back
+  // only on error. Critical fields (the actual outbound message + AI log)
+  // still surface via invalidation in `onSettled`, since those are sources of
+  // truth that the optimistic stub doesn't try to predict.
+  type PendingDraft = NonNullable<typeof pending.data>[number];
+
   const approve = trpc.drafts.approve.useMutation({
+    onMutate: async (vars) => {
+      await utils.drafts.listPending.cancel();
+      const previous = utils.drafts.listPending.getData();
+      utils.drafts.listPending.setData(undefined, (old) =>
+        (old ?? []).filter((d: PendingDraft) => d.id !== vars.draftId),
+      );
+      return { previous };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) utils.drafts.listPending.setData(undefined, ctx.previous);
+      toast.error("Approve failed", { description: err.message });
+    },
     onSuccess: () => {
       toast.success("Reply approved & sent");
+    },
+    onSettled: () => {
       utils.drafts.listPending.invalidate();
       utils.conversations.list.invalidate();
       utils.conversations.messages.invalidate();
       utils.conversations.logs.invalidate();
       utils.rag.styleExamples.invalidate();
     },
-    onError: (err) => toast.error("Approve failed", { description: err.message }),
   });
 
   const reject = trpc.drafts.reject.useMutation({
+    onMutate: async (vars) => {
+      await utils.drafts.listPending.cancel();
+      const previous = utils.drafts.listPending.getData();
+      utils.drafts.listPending.setData(undefined, (old) =>
+        (old ?? []).filter((d: PendingDraft) => d.id !== vars.draftId),
+      );
+      return { previous };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) utils.drafts.listPending.setData(undefined, ctx.previous);
+      toast.error("Reject failed", { description: err.message });
+    },
     onSuccess: () => {
       toast.success("Draft rejected — regenerating with feedback");
       setRejectDraftId(null);
       setRejectReason("");
       setRejectCategory("tone_too_formal");
+    },
+    onSettled: () => {
       utils.drafts.listPending.invalidate();
       utils.conversations.logs.invalidate();
       utils.rag.rejections.invalidate();
     },
-    onError: (err) => toast.error("Reject failed", { description: err.message }),
   });
 
   const drafts = pending.data ?? [];
@@ -1279,6 +1355,14 @@ function TopRejectReasons({
 
 function ResetDemoButton() {
   const utils = trpc.useUtils();
+  // §4.10 Typed RESET guard — the destructive CTA stays disabled until the
+  // operator literally types `RESET`. Belt-and-suspenders against accidental
+  // mid-demo wipes (and against the AlertDialog primary button being default-
+  // focused, which makes a stray Enter dangerous).
+  const [confirmText, setConfirmText] = useState("");
+  const [open, setOpen] = useState(false);
+  const canSubmit = confirmText.trim().toUpperCase() === "RESET";
+
   const reset = trpc.demo.reset.useMutation({
     onSuccess: () => {
       utils.conversations.list.invalidate();
@@ -1288,24 +1372,60 @@ function ResetDemoButton() {
       utils.rag.rejections.invalidate();
       utils.escalations.list.invalidate();
       toast.success("Demo reset — all conversations cleared");
+      setConfirmText("");
+      setOpen(false);
     },
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
   });
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="bg-background border-border text-foreground hover:bg-secondary hover:border-rose-200 hover:text-rose-700"
-      onClick={() => {
-        if (confirm("Reset demo? This will delete all conversations, drafts, rejections, and AI logs. (Knowledge base is preserved.)")) {
-          reset.mutate();
-        }
-      }}
-      disabled={reset.isPending}
-    >
-      <RotateCcw className="size-4 mr-1.5" />
-      {reset.isPending ? "Resetting…" : "Reset demo"}
-    </Button>
+    <AlertDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setConfirmText(""); }}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="bg-background border-border text-foreground hover:bg-secondary hover:border-rose-200 hover:text-rose-700"
+          disabled={reset.isPending}
+        >
+          <RotateCcw className="size-4 mr-1.5" />
+          {reset.isPending ? "Resetting…" : "Reset demo"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Reset demo data?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes <b>all conversations, drafts, rejections, AI logs, and escalations</b>.
+            The knowledge base and approved style examples are preserved.
+            <br /><br />
+            Type <code className="px-1 py-0.5 rounded bg-secondary text-rose-700 font-semibold">RESET</code> below to confirm — there is no undo.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Input
+          autoFocus
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="Type RESET"
+          className="font-mono tracking-wider"
+          onKeyDown={(e) => {
+            // Block the stray-Enter footgun: only fire when the gate is open.
+            if (e.key === "Enter" && canSubmit) reset.mutate();
+          }}
+        />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-rose-600 text-white hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed"
+            disabled={!canSubmit || reset.isPending}
+            onClick={(e) => {
+              if (!canSubmit) { e.preventDefault(); return; }
+              reset.mutate();
+            }}
+          >
+            {reset.isPending ? "Resetting…" : "Yes, wipe demo data"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

@@ -33,6 +33,7 @@ import {
   listPendingDrafts,
   listRejections,
   listStyleExamples,
+  newCorrelationId,
   resetDemoData,
   resolveEscalation,
   supersedeOtherPendingDrafts,
@@ -57,14 +58,6 @@ import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
 async function ensureAllSeeded() {
   await ensureSeeded();
   await seedKnowledgeIfEmpty();
-}
-
-/** Cheap correlation id (no need for uuid dep) — base36 ts + 4 random chars. */
-function newCorrelationId(): string {
-  return (
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 6)
-  );
 }
 
 /** Rough token estimate for budget tracking. ~4 chars per English token. */
@@ -105,10 +98,19 @@ export const appRouter = router({
   }),
 
   conversations: router({
-    list: publicProcedure.query(async () => {
-      await ensureAllSeeded();
-      return listConversations();
-    }),
+    list: publicProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(200).optional(),
+            beforeId: z.number().int().positive().optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        await ensureAllSeeded();
+        return listConversations(input);
+      }),
     messages: publicProcedure
       .input(z.object({ conversationId: z.number() }))
       .query(({ input }) => getConversationMessages(input.conversationId)),
@@ -421,12 +423,39 @@ export const appRouter = router({
 
   /* ---------- RAG inspection (read-only for UI panels) ---------- */
   rag: router({
-    styleExamples: publicProcedure.query(() => listStyleExamples(100)),
-    rejections: publicProcedure.query(() => listRejections(100)),
-    knowledge: publicProcedure.query(async () => {
-      await seedKnowledgeIfEmpty();
-      return listKnowledge();
-    }),
+    styleExamples: publicProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(500).optional(),
+            beforeId: z.number().int().positive().optional(),
+          })
+          .optional(),
+      )
+      .query(({ input }) => listStyleExamples({ limit: input?.limit ?? 100, beforeId: input?.beforeId })),
+    rejections: publicProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(500).optional(),
+            beforeId: z.number().int().positive().optional(),
+          })
+          .optional(),
+      )
+      .query(({ input }) => listRejections({ limit: input?.limit ?? 100, beforeId: input?.beforeId })),
+    knowledge: publicProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(500).optional(),
+            beforeId: z.number().int().positive().optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        await seedKnowledgeIfEmpty();
+        return listKnowledge({ limit: input?.limit ?? 500, beforeId: input?.beforeId });
+      }),
     /**
      * Knowledge edits affect every customer's reply — admin-only so a public
      * URL cannot be used to poison the RAG store.

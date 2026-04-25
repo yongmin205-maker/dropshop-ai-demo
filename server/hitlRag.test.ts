@@ -261,8 +261,12 @@ describe("RAG retrieval — topK ranking", () => {
         embedding: await emb.embedText("How much is the gold membership"),
       },
     ];
-    const ranked = emb.topK(query, items, 2);
+    // Pass minScore: -1 so we get back BOTH items regardless of cosine score
+    // (the new default minScore=0 in topK filters out exact-zero matches).
+    // The contract under test here is *ranking order*, not threshold filtering.
+    const ranked = emb.topK(query, items, 2, { minScore: -1 });
     expect(ranked[0].id).toBe(1);
+    expect(ranked).toHaveLength(2);
     expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
   });
 });

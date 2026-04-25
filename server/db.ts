@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   conversations,
@@ -6,6 +6,7 @@ import {
   messages,
   processingLogs,
   users,
+  type Conversation,
   type InsertConversation,
   type InsertEscalation,
   type InsertMessage,
@@ -34,6 +35,16 @@ export async function getDb() {
 export type DbTx = Parameters<
   Parameters<NonNullable<Awaited<ReturnType<typeof getDb>>>["transaction"]>[0]
 >[0];
+
+/**
+ * Cheap correlation id (no `uuid` dep) — base36 millis + 4 random chars.
+ * Lives in db.ts so any caller (routers, twilio webhook, scheduled jobs) that
+ * persists `processingLogs.correlationId` shares one definition. Pinned by
+ * `correlationAndSupersede.test.ts`.
+ */
+export function newCorrelationId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
 
 /**
  * Run a callback inside a single BEGIN..COMMIT transaction.
@@ -289,10 +300,19 @@ export async function createEscalation(value: InsertEscalation) {
     .where(eq(conversations.id, value.conversationId));
 }
 
-export async function listConversations(limit = 50) {
+export async function listConversations(
+  options: { limit?: number; beforeId?: number } = {},
+): Promise<Conversation[]> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(conversations).orderBy(desc(conversations.updatedAt)).limit(limit);
+  const base = db.select().from(conversations);
+  const filtered = options.beforeId
+    ? base.where(lt(conversations.id, options.beforeId))
+    : base;
+  return filtered
+    .orderBy(desc(conversations.updatedAt), desc(conversations.id))
+    .limit(limit);
 }
 
 export async function getConversationMessages(conversationId: number) {
@@ -583,22 +603,53 @@ export async function insertRejection(value: InsertRejection): Promise<void> {
   await db.insert(rejections).values(value);
 }
 
-export async function listStyleExamples(limit = 500): Promise<StyleExample[]> {
+/**
+ * RAG candidate-pool ceiling. Cosine-search is O(N) per query, so we cap the
+ * candidate set rather than letting it grow unbounded with every approved
+ * draft. Recent rows dominate utility — they reflect the *current* tone, the
+ * *current* prices, and the manager's *current* preferences — so taking the
+ * most-recent N is both cheaper and more accurate than scanning everything.
+ */
+export const RAG_POOL_LIMIT = 200;
+
+export async function listStyleExamples(
+  options: { limit?: number; beforeId?: number } | number = {},
+): Promise<StyleExample[]> {
+  // Accept both old `(limit: number)` callers and new `({limit, beforeId})` callers.
+  const opts = typeof options === "number" ? { limit: options } : options;
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(styleExamples).orderBy(desc(styleExamples.id)).limit(limit);
+  const capped = Math.min(Math.max(opts.limit ?? RAG_POOL_LIMIT, 1), 500);
+  const where = opts.beforeId && opts.beforeId > 0 ? lt(styleExamples.id, opts.beforeId) : undefined;
+  const q = db.select().from(styleExamples).orderBy(desc(styleExamples.id)).limit(capped);
+  return where ? q.where(where) : q;
 }
 
-export async function listRejections(limit = 500): Promise<Rejection[]> {
+export async function listRejections(
+  options: { limit?: number; beforeId?: number } | number = {},
+): Promise<Rejection[]> {
+  const opts = typeof options === "number" ? { limit: options } : options;
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(rejections).orderBy(desc(rejections.id)).limit(limit);
+  const capped = Math.min(Math.max(opts.limit ?? RAG_POOL_LIMIT, 1), 500);
+  const where = opts.beforeId && opts.beforeId > 0 ? lt(rejections.id, opts.beforeId) : undefined;
+  const q = db.select().from(rejections).orderBy(desc(rejections.id)).limit(capped);
+  return where ? q.where(where) : q;
 }
 
-export async function listKnowledge(): Promise<KnowledgeChunk[]> {
+export async function listKnowledge(
+  options: { limit?: number; beforeId?: number } | number = {},
+): Promise<KnowledgeChunk[]> {
+  const opts = typeof options === "number" ? { limit: options } : options;
+  const limit = opts.limit ?? 500;
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(knowledgeChunks).orderBy(desc(knowledgeChunks.id));
+  // Knowledge is the only RAG store we deliberately don't cap by recency —
+  // it's curated and small (~10 chunks) by construction. Limit is a safety
+  // ceiling against pathological seeding.
+  const where = opts.beforeId && opts.beforeId > 0 ? lt(knowledgeChunks.id, opts.beforeId) : undefined;
+  const q = db.select().from(knowledgeChunks).orderBy(desc(knowledgeChunks.id)).limit(limit);
+  return where ? q.where(where) : q;
 }
 
 export async function upsertKnowledgeChunk(value: InsertKnowledgeChunk): Promise<void> {
@@ -677,19 +728,18 @@ export async function getCustomerProfile(
     .from(drafts)
     .where(eq(drafts.conversationId, conversationId));
 
-  // Rejections for drafts in this conversation
+  // Rejections + style examples for THIS conversation only.
+  // Previously this scanned the entire `rejections` and `styleExamples` tables
+  // and filtered in JS — a classic N+1 / full-table-scan bug that was fine for
+  // a 50-customer demo but would degrade hard in production. We now push the
+  // filter into the DB via `inArray`.
   const draftIds = dRows.map((d) => d.id);
-  const rejRows: typeof rejections.$inferSelect[] = [];
-  if (draftIds.length > 0) {
-    const all = await db.select().from(rejections);
-    for (const r of all) if (draftIds.includes(r.draftId)) rejRows.push(r);
-  }
-  // Style examples (approved replies) for this conversation
-  const seRows: typeof styleExamples.$inferSelect[] = [];
-  if (draftIds.length > 0) {
-    const all = await db.select().from(styleExamples);
-    for (const s of all) if (draftIds.includes(s.draftId)) seRows.push(s);
-  }
+  const rejRows = draftIds.length
+    ? await db.select().from(rejections).where(inArray(rejections.draftId, draftIds))
+    : ([] as typeof rejections.$inferSelect[]);
+  const seRows = draftIds.length
+    ? await db.select().from(styleExamples).where(inArray(styleExamples.draftId, draftIds))
+    : ([] as typeof styleExamples.$inferSelect[]);
 
   // Intent distribution from inbound messages (and draft.intent as fallback)
   const intentCounts = new Map<string, number>();

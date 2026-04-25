@@ -231,18 +231,42 @@ export async function getOrdersByPhone(phone: string): Promise<MockOrder[]> {
   return db.select().from(mockOrders).where(eq(mockOrders.customerPhone, phone));
 }
 
+/**
+ * Known price categories — the canonical set understood by the agent. The
+ * intent classifier maps a customer SMS to one of these (or to "alteration"
+ * by default for the Alteration Quote intent), and we then prefer an exact
+ * category match over a fuzzy substring scan. Substring matching is kept as a
+ * fallback so free-text queries ("how much for a zipper?") still work, but
+ * exact-category queries no longer accidentally pull in unrelated rows whose
+ * `notes` happen to contain the substring (e.g. "alteration" inside a notes
+ * field on a dryClean item).
+ */
+const KNOWN_PRICE_CATEGORIES = new Set(["dryClean", "alteration", "laundry"]);
+
 export async function searchPrice(query: string): Promise<MockPrice[]> {
   await ensureSeeded();
   const db = await getDb();
   if (!db) return [];
+  const trimmed = (query ?? "").trim();
+  if (!trimmed) return [];
+  // Exact-category fast path — the common case for the agent.
+  if (KNOWN_PRICE_CATEGORIES.has(trimmed)) {
+    return db
+      .select()
+      .from(mockPriceList)
+      .where(eq(mockPriceList.category, trimmed));
+  }
+  // Substring fallback for free-text queries (rare; cap at 25 to bound
+  // response size in case someone passes "a" by accident).
   const all = await db.select().from(mockPriceList);
-  const q = query.toLowerCase();
-  return all.filter(
-    (p) =>
-      p.itemName.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      (p.notes ?? "").toLowerCase().includes(q),
-  );
+  const q = trimmed.toLowerCase();
+  return all
+    .filter(
+      (p) =>
+        p.itemName.toLowerCase().includes(q) ||
+        (p.notes ?? "").toLowerCase().includes(q),
+    )
+    .slice(0, 25);
 }
 
 export async function listAllPrices(): Promise<MockPrice[]> {
