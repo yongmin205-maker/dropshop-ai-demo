@@ -92,3 +92,67 @@
 - [x] Right-pane TabsList moved to white bg with shadow so it floats above the canvas
 - [x] Phone simulator outer frame gets matching multi-layer ambient shadow
 - [x] Run vitest (26 pass)
+
+## Phase 8 — Production hardening: resolve all 39 robustness audit findings
+
+### Sprint 1 — Live-safety lockdown (P0) — complete
+- [x] §2.1 Twilio webhook routes through HITL (insert pending draft, never auto-send unless `DROPSHOP_AUTO_SEND=1`)
+- [x] §2.2 Validate `X-Twilio-Signature` HMAC on `/api/twilio/sms` (403 on mismatch, URL reconstructed via `X-Forwarded-*`)
+- [x] §2.3 Idempotency: `messages.twilioSid` UNIQUE; webhook short-circuits duplicates with empty TwiML
+- [x] §2.4 Two-phase send (`messages.status: queued|sent|failed|delivered`, twilioSid persisted only on ok, draft reopened on fail)
+- [x] §2.5 Rate-limit + auth-gate: per-IP (30/min, 500/day) + per-phone (5/5min) + daily LLM token budget; `rag.addKnowledge`/`demo.reset` moved to `adminProcedure`
+
+### Sprint 2 — State integrity (P1) — partially complete (folded into Sprint 1 work)
+- [x] §3.1 `getLatestPendingDraftForMessage` filters status='pending_approval'; added `getLatestDraftForMessage` for audit views
+- [x] §3.2 Approve/Reject use real `withTransaction` blocks: state transition + outbound row insert (approve) and transition + supersede + rejection + log (reject) commit atomically. Twilio I/O is *outside* the txn so row locks stay short; failure path re-opens the draft.
+- [x] §3.3 `resolveEscalation` clears `conversations.escalated` when no other open escalations remain
+- [x] §3.4 `getOrCreateConversation` uses `INSERT ... ON DUPLICATE KEY UPDATE`
+- [x] §3.5 Customer turn (inbound message + step logs + intent + draft OR escalation) commits inside a single `withTransaction` block in both `simulator.sendMessage` and `twilioWebhook`.
+- [x] §3.6 DB-unavailable propagates errors instead of silent void on writes (insertStyleExample/insertRejection/upsertKnowledgeChunk/updateConversationIntent/updateDraftStatus)
+- [x] §3.7 `resetDemoData` transactional + admin-only + `ALLOW_DEMO_RESET` env gate
+
+### Sprint 2.5 — Real DB transactions (carryover) — complete
+- [x] Wrap `drafts.approve` (transition + outbound queue) in `withTransaction`; Twilio call kept out of txn, failure path re-opens draft
+- [x] Wrap `drafts.reject` (transition + supersede siblings + rejection + log) in `withTransaction`; embedding generated outside
+- [x] Wrap `drafts.reject` regeneration (insert new draft + step logs) in `withTransaction`
+- [x] Wrap `simulator.sendMessage` customer turn (inbound + logs + intent + draft|escalation) in `withTransaction`; auto-send path also tx-wrapped
+- [x] Wrap `twilioWebhook` inbound turn + auto-send paths in `withTransaction`
+- [x] New vitest `withTransaction.test.ts` (4 contracts: DB-down throws, return forwarding, error propagation, single-BEGIN)
+
+### Sprint 3 — Trust, cost & compliance (P1)
+- [ ] §3.8 Cross-instance seeding via `INSERT IGNORE` / unique-key upserts
+- [ ] §3.9 Knowledge chunks generated from `MEMBERSHIP_INFO` + `SEED_PRICES` (single source)
+- [ ] §3.10 Embedding fallback banner + raise cosine threshold when in fallback
+- [ ] §3.11 Classifier defaults to `Critical Escalation` on parse failure (fail-safe)
+- [ ] §3.12 PII redaction in `processingLogs.detail` (phone masking, ref by message id)
+- [ ] §3.13 MMS skeleton: capture `MediaUrl0..N` and pass as image content for Alteration Quote
+- [ ] §3.14 `config.get` re-fetched after each approve; live-mode visible in button label
+- [ ] LLM/Twilio/embeddings AbortController timeouts (8s)
+
+### Sprint 4 — Operational quality (P2)
+- [ ] §4.1 Smart polling: pause on `document.hidden`, slow when blurred
+- [ ] §4.2 Optimistic updates on Approve/Reject
+- [ ] §4.3 Cursor pagination on `list*` endpoints (conversations/styleExamples/rejections/knowledge)
+- [ ] §4.4 Cap RAG topK candidate pool to recent N
+- [ ] §4.5 `getCustomerProfile` uses `inArray` instead of in-memory filter
+- [ ] §4.6 `searchPrice` switched to `eq(category)` for known categories
+- [ ] §4.7 Reject supersedes any other pending drafts for same `inboundMessageId`
+- [ ] §4.9 Structured tracing: correlation_id on logs + twilioSid linkage
+- [ ] §4.10 Reset confirm uses shadcn AlertDialog with typed "RESET" guard
+- [ ] §4.11 Embedding dimension stored alongside vector
+
+### Sprint 5 — Hardening polish (P3)
+- [x] §5.1 E.164 phone validation in `sendSms` (rejects pre-Twilio-call) + simulator input also validates
+- [ ] §5.2 SMS segment cap (320 chars warning)
+- [x] §5.3 simulator body cap reduced to 500 chars (was 1000)
+- [ ] §5.4 Server-side pickup guard when customer not found
+- [x] §5.5 `getConversationById` helper added; approve mutation no longer scans `listConversations(500)`
+- [ ] §5.6 `document.title` badge with pending count
+- [ ] §5.8 Classifier prompt few-shot examples
+- [ ] §5.9 mysql2 pool with keep-alive
+- [ ] §5.10 CSRF protection on mutations
+- [ ] §5.11 Reset clears `activeConvId`
+- [ ] §5.12 Embedding LRU cache (1000 entries, sha256 key)
+
+### Final
+- [ ] Full vitest suite green, save checkpoint

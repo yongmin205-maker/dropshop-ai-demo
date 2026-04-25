@@ -5,6 +5,7 @@ import {
   mysqlTable,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core";
 
@@ -45,16 +46,30 @@ export type Conversation = typeof conversations.$inferSelect;
 export type InsertConversation = typeof conversations.$inferInsert;
 
 /** Each SMS message either sent by the customer or by DropShop (AI or human). */
-export const messages = mysqlTable("messages", {
-  id: int("id").autoincrement().primaryKey(),
-  conversationId: int("conversationId").notNull(),
-  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
-  sender: mysqlEnum("sender", ["customer", "ai", "manager"]).notNull(),
-  body: text("body").notNull(),
-  intent: varchar("intent", { length: 64 }),
-  mode: mysqlEnum("mode", ["simulator", "live"]).default("simulator").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+export const messages = mysqlTable(
+  "messages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    conversationId: int("conversationId").notNull(),
+    direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+    sender: mysqlEnum("sender", ["customer", "ai", "manager"]).notNull(),
+    body: text("body").notNull(),
+    intent: varchar("intent", { length: 64 }),
+    mode: mysqlEnum("mode", ["simulator", "live"]).default("simulator").notNull(),
+    /** Two-phase send tracking. queued = persisted but not yet handed to Twilio. sent = Twilio accepted. failed = upstream error. delivered = optional later state. */
+    status: mysqlEnum("status", ["queued", "sent", "failed", "delivered"]).default("sent").notNull(),
+    /** Twilio MessageSid — outbound: returned by Messages.create; inbound: provided by Twilio webhook. UNIQUE so duplicate webhook deliveries become no-ops. */
+    twilioSid: varchar("twilioSid", { length: 64 }),
+    /** Stable correlation id grouping every row tied to one inbound → draft → reply chain. */
+    correlationId: varchar("correlationId", { length: 64 }),
+    /** Captured Twilio API error string when status='failed'. */
+    sendError: varchar("sendError", { length: 256 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    twilioSidUnique: uniqueIndex("messages_twilioSid_unique").on(t.twilioSid),
+  }),
+);
 
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = typeof messages.$inferInsert;
@@ -70,9 +85,12 @@ export const processingLogs = mysqlTable("processingLogs", {
     "response_drafted",
     "sent",
     "escalated",
+    "send_failed",
   ]).notNull(),
   label: varchar("label", { length: 256 }).notNull(),
   detail: json("detail"),
+  /** Stable correlation id grouping every row tied to one inbound → draft → reply chain. */
+  correlationId: varchar("correlationId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -177,6 +195,7 @@ export const styleExamples = mysqlTable("styleExamples", {
   customerBody: text("customerBody").notNull(),
   approvedReply: text("approvedReply").notNull(),
   embedding: json("embedding").notNull(), // number[] (cosine sim)
+  embeddingDim: int("embeddingDim").default(0).notNull(), // 256 (hash fallback) or 1536 (OpenAI)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -208,6 +227,7 @@ export const rejections = mysqlTable("rejections", {
   category: mysqlEnum("category", REJECT_CATEGORIES).default("other").notNull(),
   reason: text("reason").notNull(),
   embedding: json("embedding").notNull(),
+  embeddingDim: int("embeddingDim").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -218,15 +238,22 @@ export type InsertRejection = typeof rejections.$inferInsert;
  * Tier 1 (RAG): Editable knowledge facts (price list, membership policy, hours, pickup rules).
  * Manager can edit these directly; seeded on first run.
  */
-export const knowledgeChunks = mysqlTable("knowledgeChunks", {
-  id: int("id").autoincrement().primaryKey(),
-  topic: varchar("topic", { length: 64 }).notNull(), // pricing / membership / hours / policy / pickup
-  title: varchar("title", { length: 256 }).notNull(),
-  body: text("body").notNull(),
-  embedding: json("embedding").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+export const knowledgeChunks = mysqlTable(
+  "knowledgeChunks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    topic: varchar("topic", { length: 64 }).notNull(),
+    title: varchar("title", { length: 256 }).notNull(),
+    body: text("body").notNull(),
+    embedding: json("embedding").notNull(),
+    embeddingDim: int("embeddingDim").default(0).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (t) => ({
+    topicTitleUnique: uniqueIndex("knowledge_topic_title_unique").on(t.topic, t.title),
+  }),
+);
 
 export type KnowledgeChunk = typeof knowledgeChunks.$inferSelect;
 export type InsertKnowledgeChunk = typeof knowledgeChunks.$inferInsert;

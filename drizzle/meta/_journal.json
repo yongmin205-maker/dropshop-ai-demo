@@ -29,6 +29,13 @@
       "when": 1777067307357,
       "tag": "0003_flat_nuke",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1777081706094,
+      "tag": "0004_flimsy_talon",
+      "breakpoints": true
     }
   ]
 }

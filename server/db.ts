@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   conversations,
@@ -26,6 +26,29 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+/** Transaction handle exposed to callers — same shape as the base drizzle
+ *  client, scoped to one MySQL connection / one BEGIN..COMMIT block. */
+export type DbTx = Parameters<
+  Parameters<NonNullable<Awaited<ReturnType<typeof getDb>>>["transaction"]>[0]
+>[0];
+
+/**
+ * Run a callback inside a single BEGIN..COMMIT transaction.
+ * Throws if the database is unavailable so callers do not silently lose writes.
+ *
+ * Hot-path helpers (`appendMessageTx`, `appendProcessingLogsTx`, `insertDraftTx`,
+ * `transitionDraftStatusTx`, `updateMessageDeliveryTx`, `updateConversationIntentTx`,
+ * `createEscalationTx`, `supersedeOtherPendingDraftsTx`, `insertStyleExampleTx`,
+ * `insertRejectionTx`) accept the `DbTx` so multi-row turns commit atomically.
+ */
+export async function withTransaction<T>(
+  fn: (tx: DbTx) => Promise<T>,
+): Promise<T> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async (tx) => fn(tx as DbTx));
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -90,21 +113,42 @@ export async function getUserByOpenId(openId: string) {
 export async function getOrCreateConversation(phone: string, customerName?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const existing = await db.select().from(conversations).where(eq(conversations.phone, phone)).limit(1);
-  if (existing.length > 0) return existing[0];
-
+  // Race-safe upsert: relies on UNIQUE(phone). Two concurrent inbound webhooks
+  // for the same brand-new phone both succeed; only one row is created.
   const insertValue: InsertConversation = { phone, customerName: customerName ?? null };
-  const result = await db.insert(conversations).values(insertValue);
-  // mysql2 driver returns insertId on the first element
-  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
-    ?? (result as unknown as { insertId?: number }).insertId;
-  if (insertId) {
-    const fresh = await db.select().from(conversations).where(eq(conversations.id, insertId)).limit(1);
-    if (fresh[0]) return fresh[0];
-  }
-  // Fallback: re-query by phone
-  const refetch = await db.select().from(conversations).where(eq(conversations.phone, phone)).limit(1);
+  await db
+    .insert(conversations)
+    .values(insertValue)
+    .onDuplicateKeyUpdate({
+      set: customerName ? { customerName } : { phone: sql`${conversations.phone}` },
+    });
+  const refetch = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.phone, phone))
+    .limit(1);
   return refetch[0]!;
+}
+
+export async function getConversationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
+  return rows[0];
+}
+
+/** Tx-aware variant. Use inside `withTransaction(async (tx) => ...)`. */
+export async function appendMessageTx(
+  tx: DbTx,
+  value: InsertMessage,
+): Promise<typeof messages.$inferSelect> {
+  const result = await tx.insert(messages).values(value);
+  const insertId =
+    (result as unknown as { insertId?: number }[])[0]?.insertId ??
+    (result as unknown as { insertId?: number }).insertId;
+  if (!insertId) throw new Error("Failed to insert message (no insertId)");
+  const rows = await tx.select().from(messages).where(eq(messages.id, insertId)).limit(1);
+  return rows[0]!;
 }
 
 export async function appendMessage(value: InsertMessage) {
@@ -131,6 +175,91 @@ export async function appendProcessingLog(value: InsertProcessingLog) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.insert(processingLogs).values(value);
+}
+
+/** Bulk insert variant used by transactional turn writes. */
+export async function appendProcessingLogs(values: InsertProcessingLog[]) {
+  if (values.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(processingLogs).values(values);
+}
+
+/** Tx-aware variants. */
+export async function appendProcessingLogTx(tx: DbTx, value: InsertProcessingLog) {
+  await tx.insert(processingLogs).values(value);
+}
+export async function appendProcessingLogsTx(tx: DbTx, values: InsertProcessingLog[]) {
+  if (values.length === 0) return;
+  await tx.insert(processingLogs).values(values);
+}
+export async function updateConversationIntentTx(
+  tx: DbTx,
+  id: number,
+  intent: string,
+) {
+  await tx.update(conversations).set({ lastIntent: intent }).where(eq(conversations.id, id));
+}
+export async function createEscalationTx(
+  tx: DbTx,
+  value: InsertEscalation,
+): Promise<{ id: number }> {
+  const result = await tx.insert(escalations).values(value);
+  const insertId =
+    (result as unknown as { insertId?: number }[])[0]?.insertId ??
+    (result as unknown as { insertId?: number }).insertId ??
+    0;
+  // Mirror the escalated flag on the parent conversation.
+  await tx.update(conversations).set({ escalated: 1 }).where(eq(conversations.id, value.conversationId));
+  return { id: insertId };
+}
+export async function updateMessageDeliveryTx(
+  tx: DbTx,
+  id: number,
+  delivery: {
+    status: "queued" | "sent" | "failed" | "delivered";
+    twilioSid?: string;
+    sendError?: string;
+  },
+) {
+  await tx
+    .update(messages)
+    .set({
+      status: delivery.status,
+      twilioSid: delivery.twilioSid ?? null,
+      sendError: delivery.sendError ?? null,
+    })
+    .where(eq(messages.id, id));
+}
+
+/** Look up an inbound message by Twilio MessageSid for webhook idempotency. */
+export async function getMessageByTwilioSid(twilioSid: string) {
+  if (!twilioSid) return undefined;
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(messages).where(eq(messages.twilioSid, twilioSid)).limit(1);
+  return rows[0];
+}
+
+/** Update outbound delivery state after Twilio response (two-phase send). */
+export async function updateMessageDelivery(
+  id: number,
+  delivery: {
+    status: "queued" | "sent" | "failed" | "delivered";
+    twilioSid?: string;
+    sendError?: string;
+  },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(messages)
+    .set({
+      status: delivery.status,
+      twilioSid: delivery.twilioSid ?? null,
+      sendError: delivery.sendError ?? null,
+    })
+    .where(eq(messages.id, id));
 }
 
 export async function createEscalation(value: InsertEscalation) {
@@ -184,15 +313,31 @@ export async function getOpenEscalations() {
 export async function resolveEscalation(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  // First resolve the escalation row.
+  const targetRows = await db.select().from(escalations).where(eq(escalations.id, id)).limit(1);
+  const target = targetRows[0];
+  if (!target) return;
   await db
     .update(escalations)
     .set({ status: "resolved", resolvedAt: new Date() })
     .where(eq(escalations.id, id));
+  // Then check for any *other* still-open escalation on the same conversation.
+  const stillOpen = await db
+    .select()
+    .from(escalations)
+    .where(and(eq(escalations.conversationId, target.conversationId), eq(escalations.status, "open")))
+    .limit(1);
+  if (stillOpen.length === 0) {
+    await db
+      .update(conversations)
+      .set({ escalated: 0 })
+      .where(eq(conversations.id, target.conversationId));
+  }
 }
 
 export async function updateConversationIntent(id: number, intent: string) {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
   await db.update(conversations).set({ lastIntent: intent }).where(eq(conversations.id, id));
 }
 
@@ -232,6 +377,73 @@ export async function insertDraft(value: InsertDraft): Promise<Draft> {
   return rows[0]!;
 }
 
+export async function insertDraftTx(tx: DbTx, value: InsertDraft): Promise<Draft> {
+  const result = await tx.insert(drafts).values(value);
+  const insertId =
+    (result as unknown as { insertId?: number }[])[0]?.insertId ??
+    (result as unknown as { insertId?: number }).insertId;
+  if (!insertId) throw new Error("Failed to insert draft (no insertId)");
+  const rows = await tx.select().from(drafts).where(eq(drafts.id, insertId)).limit(1);
+  return rows[0]!;
+}
+
+export async function transitionDraftStatusTx(
+  tx: DbTx,
+  draftId: number,
+  next: "approved" | "rejected" | "superseded",
+): Promise<Draft | null> {
+  const result = await tx
+    .update(drafts)
+    .set({ status: next })
+    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending_approval")));
+  const affected =
+    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
+    (result as unknown as { affectedRows?: number }).affectedRows ??
+    0;
+  if (!affected) return null;
+  const fresh = await tx.select().from(drafts).where(eq(drafts.id, draftId)).limit(1);
+  return fresh[0] ?? null;
+}
+
+export async function supersedeOtherPendingDraftsTx(
+  tx: DbTx,
+  inboundMessageId: number,
+  keepDraftId: number,
+) {
+  await tx
+    .update(drafts)
+    .set({ status: "superseded" })
+    .where(
+      and(
+        eq(drafts.inboundMessageId, inboundMessageId),
+        eq(drafts.status, "pending_approval"),
+        ne(drafts.id, keepDraftId),
+      ),
+    );
+}
+
+export async function updateDraftStatusTx(
+  tx: DbTx,
+  id: number,
+  status: Draft["status"],
+) {
+  await tx.update(drafts).set({ status }).where(eq(drafts.id, id));
+}
+
+export async function insertStyleExampleTx(
+  tx: DbTx,
+  value: InsertStyleExample,
+) {
+  await tx.insert(styleExamples).values(value);
+}
+
+export async function insertRejectionTx(
+  tx: DbTx,
+  value: InsertRejection,
+) {
+  await tx.insert(rejections).values(value);
+}
+
 export async function getDraftById(id: number): Promise<Draft | undefined> {
   const db = await getDb();
   if (!db) return undefined;
@@ -241,10 +453,10 @@ export async function getDraftById(id: number): Promise<Draft | undefined> {
 
 export async function updateDraftStatus(
   id: number,
-  status: Draft["status"]
+  status: Draft["status"],
 ): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
   await db.update(drafts).set({ status }).where(eq(drafts.id, id));
 }
 
@@ -256,10 +468,74 @@ export async function getLatestPendingDraftForMessage(
   const rows = await db
     .select()
     .from(drafts)
+    .where(
+      and(
+        eq(drafts.inboundMessageId, messageId),
+        eq(drafts.status, "pending_approval"),
+      ),
+    )
+    .orderBy(desc(drafts.id))
+    .limit(1);
+  return rows[0];
+}
+
+/** Latest draft regardless of status — for audit/timeline views. */
+export async function getLatestDraftForMessage(
+  messageId: number,
+): Promise<Draft | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(drafts)
     .where(eq(drafts.inboundMessageId, messageId))
     .orderBy(desc(drafts.id))
     .limit(1);
   return rows[0];
+}
+
+/**
+ * Atomic state transition for a draft. Returns the post-update row only when
+ * the update actually changed `status` from `pending_approval` to `next`.
+ * If another approver/rejecter beat us, returns null and the caller MUST treat
+ * this as a 409 conflict (do not also send Twilio / write outbound).
+ */
+export async function transitionDraftStatus(
+  draftId: number,
+  next: "approved" | "rejected" | "superseded",
+): Promise<Draft | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db
+    .update(drafts)
+    .set({ status: next })
+    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending_approval")));
+  const affected =
+    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
+    (result as unknown as { affectedRows?: number }).affectedRows ??
+    0;
+  if (!affected) return null;
+  const fresh = await db.select().from(drafts).where(eq(drafts.id, draftId)).limit(1);
+  return fresh[0] ?? null;
+}
+
+/** Mark every other pending draft for the same inbound message as superseded. */
+export async function supersedeOtherPendingDrafts(
+  inboundMessageId: number,
+  keepDraftId: number,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(drafts)
+    .set({ status: "superseded" })
+    .where(
+      and(
+        eq(drafts.inboundMessageId, inboundMessageId),
+        eq(drafts.status, "pending_approval"),
+        ne(drafts.id, keepDraftId),
+      ),
+    );
 }
 
 export async function listPendingDrafts(
@@ -281,13 +557,13 @@ export async function listPendingDrafts(
 
 export async function insertStyleExample(value: InsertStyleExample): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
   await db.insert(styleExamples).values(value);
 }
 
 export async function insertRejection(value: InsertRejection): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
   await db.insert(rejections).values(value);
 }
 
@@ -311,8 +587,18 @@ export async function listKnowledge(): Promise<KnowledgeChunk[]> {
 
 export async function upsertKnowledgeChunk(value: InsertKnowledgeChunk): Promise<void> {
   const db = await getDb();
-  if (!db) return;
-  await db.insert(knowledgeChunks).values(value);
+  if (!db) throw new Error("Database not available");
+  // UNIQUE(topic, title) means re-seeding across instances is a no-op.
+  await db
+    .insert(knowledgeChunks)
+    .values(value)
+    .onDuplicateKeyUpdate({
+      set: {
+        body: value.body,
+        embedding: value.embedding,
+        embeddingDim: value.embeddingDim ?? 0,
+      },
+    });
 }
 
 
@@ -320,14 +606,17 @@ export async function upsertKnowledgeChunk(value: InsertKnowledgeChunk): Promise
 export async function resetDemoData(): Promise<{ ok: boolean }> {
   const db = await getDb();
   if (!db) return { ok: false };
-  // Order matters: drop child rows before parents to respect FKs.
-  await db.delete(rejections);
-  await db.delete(styleExamples);
-  await db.delete(drafts);
-  await db.delete(processingLogs);
-  await db.delete(escalations);
-  await db.delete(messages);
-  await db.delete(conversations);
+  // Wrapped in a transaction so a partial failure cannot leave the system in
+  // an orphaned state (e.g. rejections without their parent drafts).
+  await db.transaction(async (tx) => {
+    await tx.delete(rejections);
+    await tx.delete(styleExamples);
+    await tx.delete(drafts);
+    await tx.delete(processingLogs);
+    await tx.delete(escalations);
+    await tx.delete(messages);
+    await tx.delete(conversations);
+  });
   return { ok: true };
 }
 

@@ -30,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type AgentStep = {
-  step: "intent_detected" | "mock_api_called" | "response_drafted" | "sent" | "escalated";
+  step: "intent_detected" | "mock_api_called" | "response_drafted" | "sent" | "escalated" | "send_failed";
   label: string;
   detail?: unknown;
 };
@@ -41,6 +41,7 @@ const STEP_META: Record<AgentStep["step"], { label: string; tone: string; icon: 
   response_drafted: { label: "Response drafted", tone: "text-emerald-700", icon: <CircleDot className="size-3.5" /> },
   sent: { label: "Sent", tone: "text-emerald-700", icon: <CheckCircle2 className="size-3.5" /> },
   escalated: { label: "Escalated", tone: "text-rose-600", icon: <AlertTriangle className="size-3.5" /> },
+  send_failed: { label: "Send failed", tone: "text-rose-600", icon: <AlertTriangle className="size-3.5" /> },
 };
 
 function intentTone(intent: string | null | undefined) {
