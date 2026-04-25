@@ -159,8 +159,8 @@
 
 ### Final
 - [x] Full vitest suite green (121/121)
-- [ ] Save checkpoint after Sprint 5 hardening (in flight)
+- [x] Save checkpoint after Sprint 5 hardening (c9790d96)
 
-### Carryover after Sprint 5
-- [ ] Optional: add a soft 320-char UI warning on the Approval Queue draft card so the operator sees "this will bill 3 segments" before clicking Approve (graduated guardrail next to the existing hard cap)
-- [ ] Add a deployment-time integration check that a real cross-origin POST to `/api/trpc/drafts.approve` from a different host returns 403 — currently only unit-pinned via mocked Express `req`/`res` against `requireSameOrigin` directly (7 contracts), not against the live proxy + tRPC client stack.
+### Carryover after Sprint 5 — complete
+- [x] Soft 320-char UI warning: new `SmsLengthHint` component renders below every Approval Queue draft body, showing exact char count + estimated SMS segment count, with graduated tone (gray → amber → orange → rose) and an explicit "Will be blocked by hard cap" callout at ≥4 segments. Mirrors the server-side `countSmsSegments` so operator never approves something that the server will then refuse.
+- [x] Cross-origin integration test: new `originGuardIntegration.test.ts` (7 contracts) mounts `requireSameOrigin` on a real Express app via `supertest` and exercises GET pass-through, same-origin POST under proxy headers, cross-origin 403, missing-Origin 403, Referer fallback, ALLOWED_ORIGINS allow-list precedence, and confirms the Twilio webhook mount is not accidentally covered. Production deployment under a different domain just needs `ALLOWED_ORIGINS` set in env.

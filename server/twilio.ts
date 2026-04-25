@@ -30,23 +30,12 @@ export function getDemoPhoneNumber(): string | null {
 }
 
 /**
- * Estimate SMS segment count.
- * GSM-7 alphabet = 160 chars / segment, multi-segment = 153 each.
- * Any non-GSM character bumps the whole message to UCS-2 = 70 / 67 each.
- *
- * This is a *conservative* estimate — exact billing comes from Twilio.
+ * Re-exported from `shared/smsSegments.ts` so client + server use the same
+ * algorithm. Keep the original named export so existing imports still work.
  */
-export function smsSegmentCount(body: string): number {
-  if (!body) return 0;
-  const isGsm = /^[\x00-\x7F\u00A3\u00A5\u00E0\u00E8\u00E9\u00EC\u00F2\u00F9\u20AC]*$/.test(body);
-  const len = body.length;
-  if (isGsm) {
-    if (len <= 160) return 1;
-    return Math.ceil(len / 153);
-  }
-  if (len <= 70) return 1;
-  return Math.ceil(len / 67);
-}
+export { smsSegmentCount } from "../shared/smsSegments";
+import { smsSegmentCount as _segCount } from "../shared/smsSegments";
+
 
 const TWILIO_TIMEOUT_MS = 8_000;
 
@@ -73,7 +62,7 @@ export async function sendSms(to: string, body: string): Promise<SendResult> {
   if (!body || body.trim().length === 0) {
     return { ok: false, error: "Empty SMS body" };
   }
-  const segs = smsSegmentCount(body);
+  const segs = _segCount(body);
   if (segs > MAX_SMS_SEGMENTS) {
     return {
       ok: false,

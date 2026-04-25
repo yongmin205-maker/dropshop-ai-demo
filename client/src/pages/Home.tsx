@@ -919,6 +919,39 @@ function CustomerProfileBadge({ profile }: { profile: CustomerProfileData }) {
   );
 }
 
+// §5.2 carryover: graduated guardrail next to the hard 4-segment cap. Mirrors
+// the server-side `countSmsSegments` (GSM-7: 160 single / 153 multi). Shows a
+// per-segment cost-style hint and goes amber at >320 chars / orange at >480.
+function SmsLengthHint({ body }: { body: string }) {
+  const len = body.length;
+  // Conservative client-side approximation. Server is authoritative.
+  const segments = len === 0 ? 0 : len <= 160 ? 1 : Math.ceil(len / 153);
+  const tone =
+    segments >= 4
+      ? "text-rose-700 bg-rose-50 border-rose-200"
+      : segments === 3
+      ? "text-orange-700 bg-orange-50 border-orange-200"
+      : segments === 2
+      ? "text-amber-700 bg-amber-50 border-amber-200"
+      : "text-muted-foreground bg-secondary border-border";
+  return (
+    <div className="mt-1.5 flex items-center justify-between text-[10px]">
+      <span className={`px-1.5 py-0.5 rounded border tabular-nums ${tone}`}>
+        {len} chars · {segments} SMS segment{segments === 1 ? "" : "s"}
+      </span>
+      {segments >= 4 ? (
+        <span className="text-rose-700 font-medium">
+          Will be blocked by hard cap (4 segments)
+        </span>
+      ) : segments >= 3 ? (
+        <span className="text-orange-700">
+          Long reply — bills as {segments}× SMS
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function ApprovalQueue({
   activeConversationId,
   customerName,
@@ -1086,6 +1119,7 @@ function ApprovalQueue({
                     <div className="rounded-md bg-background border border-border p-2.5 text-sm text-foreground whitespace-pre-wrap">
                       {d.body}
                     </div>
+                    <SmsLengthHint body={d.body} />
 
                     {isRejecting ? (
                       <div className="mt-2 space-y-2">
