@@ -194,7 +194,7 @@ export default function Home() {
       </div>
 
       {/* Split-screen workspace (desktop) */}
-      <main className="hidden lg:grid max-w-[1600px] mx-auto px-6 py-6 grid-cols-12 gap-6">
+      <main className="hidden lg:grid max-w-[1600px] mx-auto px-6 py-6 grid-cols-12 gap-7">
         {/* Left: Customer phone simulator */}
         <section className="col-span-3">
           <PhoneSimulator
@@ -223,7 +223,7 @@ export default function Home() {
         {/* Right: AI log + escalations */}
         <section className="col-span-4 space-y-4">
           <Tabs defaultValue="approvals">
-            <TabsList className="bg-secondary border border-border">
+            <TabsList className="bg-background border border-border shadow-sm">
               <TabsTrigger value="approvals">
                 Approvals
                 <PendingDraftsBadge />
@@ -271,7 +271,7 @@ export default function Home() {
       {/* Mobile workspace (tabs) */}
       <main className="lg:hidden max-w-[1600px] mx-auto px-3 py-4">
         <Tabs defaultValue="simulator" className="w-full">
-          <TabsList className="bg-secondary border border-border w-full grid grid-cols-4">
+          <TabsList className="bg-background border border-border w-full grid grid-cols-4 shadow-sm">
             <TabsTrigger value="simulator" className="text-xs">Simulator</TabsTrigger>
             <TabsTrigger value="inbox" className="text-xs">Inbox</TabsTrigger>
             <TabsTrigger value="approvals" className="text-xs">
@@ -380,7 +380,7 @@ function PhoneSimulator({
 }) {
   const visibleMessages = messages; // already filtered to active conversation by parent
   return (
-    <div className="rounded-[2rem] bg-gradient-to-b from-zinc-800 to-zinc-900 p-2 shadow-xl shadow-black/15 border border-zinc-900">
+    <div className="rounded-[2rem] bg-gradient-to-b from-zinc-800 to-zinc-900 p-2 border border-zinc-900" style={{ boxShadow: "0 0 0 1px rgba(50,50,93,0.04), 0 12px 32px -10px rgba(20,20,40,0.25), 0 6px 12px -4px rgba(50,50,93,0.08)" }}>
       <div className="rounded-[1.6rem] bg-zinc-50 text-zinc-900 overflow-hidden flex flex-col" style={{ minHeight: 640 }}>
         {/* Phone status bar */}
         <div className="flex items-center justify-between text-xs text-zinc-500 px-5 pt-3 pb-2">
@@ -1099,7 +1099,7 @@ function RagMemoryPanel() {
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="style">
-          <TabsList className="bg-secondary border border-border">
+          <TabsList className="bg-secondary border border-border rounded-md">
             <TabsTrigger value="style">
               Approved
               <Badge className="ml-2 bg-emerald-50 text-emerald-700 border-emerald-200">

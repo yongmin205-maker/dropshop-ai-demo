@@ -76,29 +76,29 @@
   --popover-foreground: oklch(0.22 0.04 254);
   --primary: oklch(0.55 0.24 274);             /* iris #635BFF */
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.975 0.005 248);         /* #F6F9FC */
+  --secondary: oklch(0.96 0.008 248);          /* #EEF2F7 — slightly deeper canvas so panels lift */
   --secondary-foreground: oklch(0.32 0.04 250);
-  --muted: oklch(0.975 0.005 248);
+  --muted: oklch(0.96 0.008 248);
   --muted-foreground: oklch(0.5 0.025 250);    /* #425466 */
   --accent: oklch(0.96 0.02 274);              /* iris-tinted accent */
   --accent-foreground: oklch(0.32 0.18 274);
   --destructive: oklch(0.6 0.21 18);           /* rose */
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.92 0.005 248);             /* #E6EBF1 */
-  --input: oklch(0.92 0.005 248);
+  --border: oklch(0.9 0.006 248);              /* slightly stronger hairline */
+  --input: oklch(0.9 0.006 248);
   --ring: oklch(0.55 0.24 274);
   --chart-1: oklch(0.55 0.24 274);             /* iris */
   --chart-2: oklch(0.7 0.17 220);              /* cyan-blue */
   --chart-3: oklch(0.65 0.13 155);             /* sage */
   --chart-4: oklch(0.7 0.18 60);               /* warm amber */
   --chart-5: oklch(0.6 0.21 18);               /* rose */
-  --sidebar: oklch(0.975 0.005 248);
+  --sidebar: oklch(0.96 0.008 248);
   --sidebar-foreground: oklch(0.22 0.04 254);
   --sidebar-primary: oklch(0.55 0.24 274);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.96 0.02 274);
   --sidebar-accent-foreground: oklch(0.32 0.18 274);
-  --sidebar-border: oklch(0.92 0.005 248);
+  --sidebar-border: oklch(0.9 0.006 248);
   --sidebar-ring: oklch(0.55 0.24 274);
 
   --iris: oklch(0.55 0.24 274);
@@ -108,7 +108,7 @@
   --sage: oklch(0.65 0.13 155);
   --rose: oklch(0.6 0.21 18);
   --canvas: oklch(1 0 0);
-  --canvas-soft: oklch(0.975 0.005 248);
+  --canvas-soft: oklch(0.96 0.008 248);
 }
 
 /* Dark mode kept as fallback (not used by default) */
@@ -239,14 +239,27 @@
     color: transparent;
   }
 
-  /* Premium panel — Stripe soft shadow stack */
+  /* Premium panel — Stripe soft shadow stack (lifted card on canvas) */
   .panel {
-    @apply rounded-[12px] border bg-card;
+    @apply rounded-[14px] border bg-card;
     border-color: var(--border);
     box-shadow:
-      0 0 0 1px rgba(50, 50, 93, 0.025),
-      0 2px 5px 0 rgba(50, 50, 93, 0.04),
-      0 1px 1.5px 0 rgba(0, 0, 0, 0.03);
+      0 0 0 1px rgba(50, 50, 93, 0.04),
+      0 8px 24px -8px rgba(50, 50, 93, 0.12),
+      0 4px 8px -2px rgba(50, 50, 93, 0.06),
+      0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  }
+
+  /* Card header gets its own band */
+  .panel > [data-slot="card-header"] {
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, oklch(0.985 0.004 248) 0%, oklch(1 0 0) 100%);
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    padding-bottom: 1rem;
+  }
+  .panel > [data-slot="card-content"] {
+    padding-top: 1rem;
   }
 
   /* Card with iris-tinted top border for active states */

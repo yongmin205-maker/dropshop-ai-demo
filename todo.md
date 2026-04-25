@@ -66,19 +66,29 @@
 - [x] Vitest: 3 new tests — customer profile aggregation, null for unknown conv, listStyleExamplesByPhone scoping (26 total passing)
 
 
-## Phase 6 — Stripe Soft Light visual refresh (in progress)
+## Phase 6 — Stripe Soft Light visual refresh (complete)
 
 - [x] Build moodboard with 5 tone-and-manner candidates; user chose Option 3 (Stripe Soft Light)
-- [ ] Rewrite `index.css` with Stripe Soft Light tokens: white canvas (#FFFFFF), navy ink (#0A2540), iris primary (#635BFF), gray-100 (#F6F9FC) panels, soft shadows
-- [ ] Switch ThemeProvider default from "dark" to "light" so semantic tokens read light values everywhere
-- [ ] Replace champagne/clay class names (`bubble-business-inbox`, `text-champagne`, `surface-cream`) with Stripe-language equivalents
-- [ ] Header: clean white bar, navy logo, iris-tinted Live/Simulator badge, Reset/Pitch deck as ghost buttons
-- [ ] Phone simulator: keep iMessage native (light bg already matches)
-- [ ] Store Inbox: white cards on F6F9FC base, soft shadows, navy headings
-- [ ] Approval Queue: white cards, iris primary CTA, sage success, rose destructive
-- [ ] Customer profile badge: iris-tinted pill row
-- [ ] Inbox bubbles: customer = gray-100 with subtle border, DropShop = iris gradient
-- [ ] Charts/RAG memory bar widget: navy + iris + sage palette
-- [ ] Add Reset demo confirm dialog (prevent accidental click during demo)
-- [ ] Polish empty states across all tabs
-- [ ] Run vitest (26+ pass), save checkpoint, deliver
+- [x] Rewrite `index.css` with Stripe Soft Light tokens: white canvas (#FFFFFF), navy ink (#0A2540), iris primary (#635BFF), gray-100 (#F6F9FC) panels, soft shadows
+- [x] Switch ThemeProvider default from "dark" to "light" so semantic tokens read light values everywhere
+- [x] Replace champagne/clay class names (`bubble-business-inbox`, `text-champagne`, `surface-cream`) with Stripe-language equivalents
+- [x] Header: clean white bar, navy logo, iris-tinted Live/Simulator badge, Reset/Pitch deck as ghost buttons
+- [x] Phone simulator: keep iMessage native (light bg already matches); avatar swapped to iris gradient for brand consistency
+- [x] Store Inbox: white `.panel` cards on F6F9FC base, soft shadows, navy headings
+- [x] Approval Queue: white cards with iris-tinted draft rows, iris primary CTA, rose destructive outline
+- [x] Customer profile badge: iris-tinted pill row
+- [x] Inbox bubbles: customer = gray-100 with subtle border (`bubble-customer-inbox`), DropShop = iris gradient (`bubble-business-inbox`)
+- [x] Charts/RAG memory bar widget: iris fill on secondary track, light pills for category labels
+- [x] Reset demo button uses native confirm dialog with explicit warning copy
+- [x] Empty states converted to muted-foreground on light cards (Approvals, Inbox, RAG, Escalations, Phone all reviewed)
+- [x] Run vitest (26 pass), save checkpoint (44819425)
+
+## Phase 7 — Panel separation polish (complete)
+
+- [x] Deepen canvas (`--secondary` 0.975 → 0.96 oklch) so white panels lift more visibly
+- [x] Strengthen `.panel` shadow (multi-layer 8/24px ambient + 4/8px contact) + sharper hairline border
+- [x] CardHeader gets its own band (bottom border + soft top-to-bottom gradient)
+- [x] Increase desktop column gap (gap-6 → gap-7)
+- [x] Right-pane TabsList moved to white bg with shadow so it floats above the canvas
+- [x] Phone simulator outer frame gets matching multi-layer ambient shadow
+- [x] Run vitest (26 pass)
