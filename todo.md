@@ -215,3 +215,15 @@
 - [ ] Industry switcher in nav (Laundry / Salon)
 - [ ] vitest contracts for salon mock + router
 - [ ] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped
+
+
+## Pilot 2 — Salon AI Scheduler
+- [x] mockSalon data layer: stylists (Hayley, Soomin, Jisoo), 7-service catalog (cut/perm/color/balayage/manicure/pedicure/hairspa), week-of appointments, customer DB (incl. VIP)
+- [x] mockSalon overlap auctioneer: surface candidate slots inside another customer's perm/color processing window
+- [x] salonIntents classifier (7 labels: Booking Request, Availability Check, Reschedule, Cancel, Service Question, Pricing, Critical Escalation)
+- [x] salonAgent draftSalonReply: tool dispatch (lookup customer/services/stylists/overlapSlots) + reply generation w/ Modern Botanical brand voice
+- [x] tRPC salon.* router: listAppointments, getCustomer, findOverlapSlots, draft (in-memory, no DB persistence — refresh resets)
+- [x] /salon page: 3-column layout (phone simulator + Calendar+Inbox + Approval Queue), CalendarTimeline mini week visualization w/ overlap highlight
+- [x] Modern Botanical theme: scoped .salon-theme CSS vars (sage #7a8e6f + terracotta #c2825f + linen #f8f6f0), Fraunces display + DM Sans body, scoped to /salon only
+- [x] Industry switcher pills in both headers (Home → Salon, Salon → Laundromat)
+- [x] Vitest coverage: mockSalon (20 tests), salonAgent (16 tests), salonRouter (8 tests) — 44 new tests, 196 total passing

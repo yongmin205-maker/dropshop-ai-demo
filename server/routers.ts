@@ -62,6 +62,22 @@ import {
   purgeOldErrorLogs,
 } from "./errorLog";
 import { listErrorAlerts, purgeOldErrorAlerts } from "./alertEngine";
+import {
+  draftSalonReply,
+  type SalonAgentDraftResult,
+} from "./salonAgent";
+import { SALON_INTENT_LABELS, type SalonIntent } from "./salonIntents";
+import {
+  DAY_NAMES as SALON_DAY_NAMES,
+  findOverlapSlots as findSalonOverlapSlots,
+  formatPriceRange,
+  formatSlot,
+  getSalonCustomerByPhone,
+  listAppointmentsForWeek,
+  listServices as listSalonServices,
+  listStylists as listSalonStylists,
+  type ServiceCategory as SalonServiceCategory,
+} from "./mockSalon";
 
 async function ensureAllSeeded() {
   await ensureSeeded();
@@ -765,6 +781,137 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         return listErrorAlerts(input ?? {});
+      }),
+  }),
+  /* ============================================================
+   * Pilot 2 — Salon (in-memory, no DB tables)
+   * ============================================================
+   *
+   * The Salon demo is intentionally stateless and read-only on the
+   * server side. The UI keeps the conversation transcript locally
+   * (this mirrors the Simulator-Mode model the laundromat demo
+   * already uses for the customer-facing iPhone), and posts each
+   * customer turn to `salon.draft` to get an AI draft. There is
+   * NO persisted approval queue — the operator approves in-session,
+   * and the demo can be reset with a page refresh.
+   */
+  salon: router({
+    /** List the live (in-memory) week of appointments for the calendar. */
+    listAppointments: publicProcedure.query(async () => {
+      const [appts, stylists, services] = await Promise.all([
+        listAppointmentsForWeek(),
+        listSalonStylists(),
+        listSalonServices(),
+      ]);
+      return {
+        appointments: appts.map((a) => {
+          const svc = services.find((s) => s.category === a.serviceCategory);
+          const stylist = stylists.find((s) => s.id === a.stylistId);
+          return {
+            id: a.id,
+            customerId: a.customerId,
+            stylistId: a.stylistId,
+            stylistName: stylist?.name ?? a.stylistId,
+            serviceCategory: a.serviceCategory,
+            serviceName: svc?.name ?? a.serviceCategory,
+            dayIndex: a.dayIndex,
+            dayLabel: SALON_DAY_NAMES[a.dayIndex] ?? `Day ${a.dayIndex}`,
+            startMinute: a.startMinute,
+            totalMinutes: svc?.totalMinutes ?? 0,
+            processingMinutes: svc?.processingMinutes ?? 0,
+            label: formatSlot(a.dayIndex, a.startMinute, svc?.totalMinutes ?? 0),
+            status: a.status,
+          };
+        }),
+        stylists: stylists.map((s) => ({
+          id: s.id,
+          name: s.name,
+          title: s.title,
+          capabilities: s.capabilities,
+        })),
+        services: services.map((s) => ({
+          category: s.category,
+          name: s.name,
+          totalMinutes: s.totalMinutes,
+          processingMinutes: s.processingMinutes,
+          price: formatPriceRange(s),
+          description: s.description,
+        })),
+      };
+    }),
+
+    /** Look up a customer by phone (used by the simulator to pick a persona). */
+    getCustomer: publicProcedure
+      .input(z.object({ phone: z.string().min(4) }))
+      .query(async ({ input }) => {
+        const c = await getSalonCustomerByPhone(input.phone);
+        return c ?? null;
+      }),
+
+    /** Surface overlap slots for a service category (the killer demo feature). */
+    findOverlapSlots: publicProcedure
+      .input(
+        z.object({
+          serviceCategory: z.enum([
+            "cut",
+            "perm",
+            "color",
+            "balayage",
+            "manicure",
+            "pedicure",
+            "hairspa",
+          ]),
+          maxDays: z.number().int().min(1).max(7).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const slots = await findSalonOverlapSlots(
+          input.serviceCategory as SalonServiceCategory,
+          input.maxDays ?? 7,
+        );
+        return slots.map((s) => ({
+          ...s,
+          dayLabel: SALON_DAY_NAMES[s.dayIndex] ?? `Day ${s.dayIndex}`,
+          label: formatSlot(s.dayIndex, s.startMinute, s.durationMinutes),
+        }));
+      }),
+
+    /** Generate (do not send) an AI draft for a simulated inbound message. */
+    draft: publicProcedure
+      .input(
+        z.object({
+          phone: z.string().min(4),
+          body: z.string().min(1).max(2000),
+          intentOverride: z.enum([...SALON_INTENT_LABELS]).optional(),
+          managerRejectReason: z.string().max(500).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const start = Date.now();
+        let result: SalonAgentDraftResult;
+        try {
+          result = await draftSalonReply({
+            phone: input.phone,
+            body: input.body,
+            intentOverride: input.intentOverride as SalonIntent | undefined,
+            managerRejectReason: input.managerRejectReason,
+          });
+        } catch (err) {
+          await logServerError({
+            level: "error",
+            source: "salon.draft",
+            err,
+            context: { phone: input.phone, body: input.body.slice(0, 200) },
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Salon draft generation failed.",
+          });
+        }
+        return {
+          ...result,
+          latencyMs: Date.now() - start,
+        };
       }),
   }),
 });

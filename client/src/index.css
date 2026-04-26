@@ -348,3 +348,68 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 }
+
+
+/* ============================================================
+ * Pilot 2 — Salon "Modern Botanical" theme
+ * ------------------------------------------------------------
+ * Scoped to the .salon-theme wrapper so it can't bleed into
+ * the laundromat (DropShop) demo. All shadcn primitives still
+ * read from the root `--background` / `--foreground` variables;
+ * the salon page reads its palette from `--salon-*` directly.
+ * ============================================================ */
+.salon-theme {
+  --salon-canvas: #f8f6f0;          /* off-white linen */
+  --salon-surface: #ffffff;          /* card / panel */
+  --salon-surface-2: #f1ede2;        /* subtle inset */
+  --salon-ink: #1a1f1c;              /* near-black text */
+  --salon-ink-soft: #4f5950;         /* secondary text */
+  --salon-sage: #7a8e6f;             /* primary accent */
+  --salon-sage-soft: #e6ece1;        /* sage tinted bg */
+  --salon-terracotta: #c2825f;       /* secondary accent */
+  --salon-terracotta-soft: #f3e3d8;  /* terracotta tinted bg */
+  --salon-line: #e1ddcf;             /* hairline borders */
+  --salon-shadow: 0 1px 0 0 rgba(26,31,28,0.04), 0 8px 24px -8px rgba(26,31,28,0.10), 0 4px 8px -4px rgba(26,31,28,0.06);
+
+  background: var(--salon-canvas);
+  color: var(--salon-ink);
+  font-family: "DM Sans", "Inter", system-ui, sans-serif;
+}
+
+.salon-theme .salon-display {
+  font-family: "Fraunces", "Georgia", serif;
+  letter-spacing: -0.02em;
+}
+
+.salon-theme .salon-panel {
+  background: var(--salon-surface);
+  border: 1px solid var(--salon-line);
+  border-radius: 14px;
+  box-shadow: var(--salon-shadow);
+}
+
+.salon-theme .salon-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  background: var(--salon-sage-soft);
+  color: var(--salon-sage);
+  border: 1px solid color-mix(in oklab, var(--salon-sage) 25%, white);
+}
+
+.salon-theme .salon-pill--terra {
+  background: var(--salon-terracotta-soft);
+  color: var(--salon-terracotta);
+  border-color: color-mix(in oklab, var(--salon-terracotta) 25%, white);
+}
+
+.salon-theme .salon-pill--ink {
+  background: var(--salon-surface-2);
+  color: var(--salon-ink-soft);
+  border-color: var(--salon-line);
+}
