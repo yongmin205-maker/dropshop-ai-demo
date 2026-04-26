@@ -208,13 +208,13 @@
 - [x] Migrate all pilot materials into `/home/ubuntu/mainstreet-ai/` master folder
 
 ## Phase 11 — Pilot 2 Salon demo (option C: separate /salon route)
-- [ ] mockSalon.ts: customers + stylists + services + appointments seed
-- [ ] salonIntents.ts: 6 intents (booking_request, availability_check, reschedule, cancel, service_question, pricing)
-- [ ] salonRouter sub-router (mirrors aiAgent runAgent pattern, separate from DropShop)
-- [ ] /salon page with split-screen layout (carry over Home patterns)
-- [ ] Industry switcher in nav (Laundry / Salon)
-- [ ] vitest contracts for salon mock + router
-- [ ] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped
+- [x] mockSalon.ts: customers + stylists + services + appointments seed (delivered in checkpoint 0801c35d)
+- [x] salonIntents.ts: 7 intents — added Critical Escalation in addition to original 6 (delivered)
+- [x] salonRouter sub-router (mirrors aiAgent runAgent pattern, separate from DropShop) — delivered as `salon.*` namespace
+- [x] /salon page with 3-column layout (carry over Home patterns) + CalendarTimeline
+- [x] Industry switcher in nav (Laundry / Salon) — pill in both headers
+- [x] vitest contracts for salon mock + router (44 new tests)
+- [ ] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped (post-deploy step — pending user request)
 
 
 ## Pilot 2 — Salon AI Scheduler
