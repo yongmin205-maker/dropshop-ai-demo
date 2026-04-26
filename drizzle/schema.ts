@@ -259,3 +259,29 @@ export const knowledgeChunks = mysqlTable(
 
 export type KnowledgeChunk = typeof knowledgeChunks.$inferSelect;
 export type InsertKnowledgeChunk = typeof knowledgeChunks.$inferInsert;
+
+
+/* ============================================================
+ * Phase 9 — Admin error logging
+ * ============================================================
+ *
+ * `errorLogs` captures unexpected server-side failures (DB write blowups,
+ * Twilio webhook crashes, OAuth callback errors, draft persist failures, …)
+ * so an owner-only "Errors" tab in the UI can surface them at a glance,
+ * without needing access to the underlying Cloud Run console.
+ *
+ * Writes are best-effort — see `server/errorLog.ts`. Reads are gated by
+ * `adminProcedure`.
+ */
+export const errorLogs = mysqlTable("errorLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  level: mysqlEnum("level", ["error", "warn"]).default("error").notNull(),
+  source: varchar("source", { length: 128 }).notNull(),
+  message: text("message").notNull(),
+  stack: text("stack"),
+  context: json("context"),
+  correlationId: varchar("correlationId", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type ErrorLog = typeof errorLogs.$inferSelect;
+export type InsertErrorLog = typeof errorLogs.$inferInsert;

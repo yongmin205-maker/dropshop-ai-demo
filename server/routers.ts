@@ -54,6 +54,7 @@ import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
 import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
+import { clearErrorLogs, listErrorLogs, logServerError } from "./errorLog";
 
 async function ensureAllSeeded() {
   await ensureSeeded();
@@ -274,7 +275,15 @@ export const appRouter = router({
             embeddingDim: embedding.length,
           });
         } catch (err) {
-          console.warn("[drafts.approve] style example persist failed:", err);
+          // Best-effort RAG learning step — never block the customer reply on this.
+          // Log to admin Errors tab so we still notice persistent embedding failures.
+          void logServerError({
+            source: "drafts.approve",
+            err,
+            level: "warn",
+            context: { draftId: draft.id, intent: draft.intent },
+            correlationId,
+          });
         }
 
         return { ok: true, outbound, liveSendInfo, correlationId };
@@ -688,6 +697,24 @@ export const appRouter = router({
           correlationId,
         };
       }),
+  }),
+  errorLogs: router({
+    list: adminProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(200).optional(),
+            beforeId: z.number().int().positive().optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        return listErrorLogs(input ?? {});
+      }),
+    clear: adminProcedure.mutation(async () => {
+      const count = await clearErrorLogs();
+      return { cleared: count };
+    }),
   }),
 });
 

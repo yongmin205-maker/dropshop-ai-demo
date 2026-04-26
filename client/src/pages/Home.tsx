@@ -19,11 +19,13 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { PRESET_SCENARIOS, REJECT_CATEGORIES, REJECT_CATEGORY_LABELS, type PresetScenario, type RejectCategory } from "@shared/scenarios";
 import { format } from "date-fns";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Bug,
   Building2,
   Check,
   CheckCircle2,
@@ -105,6 +107,11 @@ function intentTone(intent: string | null | undefined) {
 
 export default function Home() {
   const utils = trpc.useUtils();
+  // Owner-only diagnostics gating. We deliberately do NOT show the Errors tab
+  // to anonymous demo viewers — raw stack traces would be both noisy and a
+  // small information leak about the internals.
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   // Re-poll the live-mode / fallback config every 30s so the UI honestly
   // reflects toggles made server-side without forcing a hard reload.
   const config = trpc.config.get.useQuery(undefined, { refetchInterval: 30_000 });
@@ -300,6 +307,7 @@ export default function Home() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
+              {isAdmin && <TabsTrigger value="errors">Errors</TabsTrigger>}
             </TabsList>
             <TabsContent forceMount value="approvals" className="mt-3 data-[state=inactive]:hidden">
               <ApprovalQueue
@@ -326,6 +334,11 @@ export default function Home() {
                 }}
               />
             </TabsContent>
+            {isAdmin && (
+              <TabsContent forceMount value="errors" className="mt-3 data-[state=inactive]:hidden">
+                <ErrorsPanel />
+              </TabsContent>
+            )}
           </Tabs>
         </section>
       </main>
@@ -833,6 +846,119 @@ function EscalationsPanel({
   );
 }
 
+
+/* ============================================================
+ * ErrorsPanel — admin-only diagnostics view (Phase 9)
+ * ============================================================
+ *
+ * Surfaces server-side failures persisted into `errorLogs` so the owner can
+ * triage incidents without needing access to the underlying Cloud Run console.
+ * Gated server-side via `adminProcedure`; the tab itself is also conditionally
+ * rendered only when `useAuth().user?.role === 'admin'`.
+ */
+function ErrorsPanel() {
+  const utils = trpc.useUtils();
+  const errors = trpc.errorLogs.list.useQuery(undefined, {
+    refetchInterval: useVisiblePollInterval(8000),
+  });
+  const clearAll = trpc.errorLogs.clear.useMutation({
+    onSuccess: ({ cleared }) => {
+      toast.success(cleared === 0 ? "No errors to clear" : `Cleared ${cleared} error(s)`);
+      utils.errorLogs.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const rows = errors.data ?? [];
+  return (
+    <Card className="panel rounded-[12px]">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 font-display text-lg text-[var(--ink)]">
+              <Bug className="size-4 text-rose-600" />
+              Server Errors
+              {rows.length > 0 && (
+                <Badge className="ml-1 bg-rose-50 text-rose-700 border-rose-200">
+                  {rows.length}
+                </Badge>
+              )}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Persisted server-side failures (Twilio webhook, DB writes, OAuth, embedding loops).
+              Admin-only. Newest first.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={rows.length === 0 || clearAll.isPending}
+            onClick={() => clearAll.mutate()}
+          >
+            {clearAll.isPending ? <Loader2 className="size-3 mr-1 animate-spin" /> : null}
+            Clear all
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {errors.isLoading ? (
+          <div className="text-sm text-muted-foreground py-12 text-center">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-12 text-center">
+            No server errors recorded. 🎉
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <div
+                key={row.id}
+                className="rounded-lg border border-rose-200 bg-rose-50/40 p-3 text-sm"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      className={
+                        row.level === "warn"
+                          ? "bg-amber-100 text-amber-800 border-amber-200"
+                          : "bg-rose-100 text-rose-700 border-rose-200"
+                      }
+                    >
+                      {row.level.toUpperCase()}
+                    </Badge>
+                    <span className="text-xs font-medium text-[var(--ink)]">{row.source}</span>
+                    {row.correlationId && (
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {row.correlationId}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    {format(new Date(row.createdAt), "MMM d · HH:mm:ss")}
+                  </span>
+                </div>
+                <p className="text-rose-900 break-words">{row.message}</p>
+                {row.context !== null && row.context !== undefined && (
+                  <pre className="mt-2 text-[10px] bg-white/70 rounded p-2 border border-rose-200 overflow-x-auto">
+                    {JSON.stringify(row.context, null, 2)}
+                  </pre>
+                )}
+                {row.stack && (
+                  <details className="mt-2">
+                    <summary className="text-[10px] text-muted-foreground cursor-pointer">
+                      stack trace
+                    </summary>
+                    <pre className="mt-1 text-[10px] bg-white/70 rounded p-2 border border-rose-200 overflow-x-auto whitespace-pre-wrap">
+                      {row.stack}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 /* ============================================================
  * Human-in-the-Loop & RAG components

@@ -31,6 +31,7 @@ import {
   validateTwilioSignature,
 } from "./twilio";
 import type { InsertProcessingLog } from "../drizzle/schema";
+import { logServerError } from "./errorLog";
 
 /**
  * Inbound Twilio webhook. Hardened for production:
@@ -287,7 +288,16 @@ export function registerTwilioWebhook(app: Express) {
 
       res.status(200).type("text/xml").send("<Response/>");
     } catch (err) {
-      console.error("[TwilioWebhook] error", err);
+      // Mirror to stderr AND persist into errorLogs so admin Errors tab can
+      // surface it without Cloud Run console access.
+      void logServerError({
+        source: "TwilioWebhook",
+        err,
+        context: {
+          messageSid: (req.body as Record<string, unknown> | undefined)?.MessageSid ?? null,
+          from: (req.body as Record<string, unknown> | undefined)?.From ?? null,
+        },
+      });
       // Return 500 so Twilio retries — combined with idempotency above this is
       // safe (the duplicate sid will be a no-op).
       res.status(500).type("text/xml").send("<Response/>");
