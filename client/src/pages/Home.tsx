@@ -858,9 +858,23 @@ function EscalationsPanel({
  */
 function ErrorsPanel() {
   const utils = trpc.useUtils();
-  const errors = trpc.errorLogs.list.useQuery(undefined, {
+  // Local filter state. Use "__all__" sentinel because shadcn <SelectItem>
+  // forbids empty-string values (see Common Pitfalls in template README).
+  const [levelFilter, setLevelFilter] = useState<"__all__" | "error" | "warn">("__all__");
+  const [sourceFilter, setSourceFilter] = useState<string>("__all__");
+  // Memoize the query input so trpc doesn't refetch on every keystroke /
+  // unrelated re-render (see Common Pitfalls #1 in template README).
+  const listInput = useMemo(
+    () => ({
+      level: levelFilter === "__all__" ? undefined : levelFilter,
+      source: sourceFilter === "__all__" ? undefined : sourceFilter,
+    }),
+    [levelFilter, sourceFilter],
+  );
+  const errors = trpc.errorLogs.list.useQuery(listInput, {
     refetchInterval: useVisiblePollInterval(8000),
   });
+  const sources = trpc.errorLogs.sources.useQuery();
   const alerts = trpc.errorLogs.alerts.useQuery(undefined, {
     refetchInterval: useVisiblePollInterval(8000),
   });
@@ -868,10 +882,28 @@ function ErrorsPanel() {
     onSuccess: ({ cleared }) => {
       toast.success(cleared === 0 ? "No errors to clear" : `Cleared ${cleared} error(s)`);
       utils.errorLogs.list.invalidate();
+      utils.errorLogs.sources.invalidate();
+      utils.errorLogs.alerts.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const purgeOld = trpc.errorLogs.purgeOld.useMutation({
+    onSuccess: ({ logsPurged, alertsPurged, olderThanDays }) => {
+      const total = logsPurged + alertsPurged;
+      toast.success(
+        total === 0
+          ? `Nothing to purge (older than ${olderThanDays}d)`
+          : `Purged ${logsPurged} log(s) + ${alertsPurged} alert(s) older than ${olderThanDays}d`,
+      );
+      utils.errorLogs.list.invalidate();
+      utils.errorLogs.sources.invalidate();
+      utils.errorLogs.alerts.invalidate();
     },
     onError: (err) => toast.error(err.message),
   });
   const rows = errors.data ?? [];
+  const sourceList = sources.data ?? [];
+  const filtersActive = levelFilter !== "__all__" || sourceFilter !== "__all__";
   return (
     <Card className="panel rounded-[12px]">
       <CardHeader className="pb-3">
@@ -891,18 +923,71 @@ function ErrorsPanel() {
               Admin-only. Newest first.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={rows.length === 0 || clearAll.isPending}
-            onClick={() => clearAll.mutate()}
-          >
-            {clearAll.isPending ? <Loader2 className="size-3 mr-1 animate-spin" /> : null}
-            Clear all
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={purgeOld.isPending}
+              onClick={() => purgeOld.mutate({ olderThanDays: 30 })}
+              title="Drop logs and alerts older than 30 days"
+            >
+              {purgeOld.isPending ? <Loader2 className="size-3 mr-1 animate-spin" /> : null}
+              Purge old (30d+)
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={rows.length === 0 || clearAll.isPending}
+              onClick={() => clearAll.mutate()}
+            >
+              {clearAll.isPending ? <Loader2 className="size-3 mr-1 animate-spin" /> : null}
+              Clear all
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Filter
+          </span>
+          <Select value={levelFilter} onValueChange={(v) => setLevelFilter(v as typeof levelFilter)}>
+            <SelectTrigger className="h-7 w-[110px] text-xs">
+              <SelectValue placeholder="Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All levels</SelectItem>
+              <SelectItem value="error">error</SelectItem>
+              <SelectItem value="warn">warn</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+            <SelectTrigger className="h-7 w-[180px] text-xs">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All sources</SelectItem>
+              {sourceList.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filtersActive && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                setLevelFilter("__all__");
+                setSourceFilter("__all__");
+              }}
+            >
+              Reset
+            </Button>
+          )}
+        </div>
         {alerts.data && alerts.data.length > 0 && (
           <div className="mb-4 space-y-2">
             <div className="text-[10px] font-medium uppercase tracking-wide text-amber-700">

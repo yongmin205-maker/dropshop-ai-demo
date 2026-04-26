@@ -54,8 +54,14 @@ import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
 import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
-import { clearErrorLogs, listErrorLogs, logServerError } from "./errorLog";
-import { listErrorAlerts } from "./alertEngine";
+import {
+  clearErrorLogs,
+  listErrorLogs,
+  listErrorSources,
+  logServerError,
+  purgeOldErrorLogs,
+} from "./errorLog";
+import { listErrorAlerts, purgeOldErrorAlerts } from "./alertEngine";
 
 async function ensureAllSeeded() {
   await ensureSeeded();
@@ -700,22 +706,55 @@ export const appRouter = router({
       }),
   }),
   errorLogs: router({
+    /**
+     * Filterable list. Empty inputs returns the full newest-first feed (§4.3).
+     * `level` and `source` filters compose with AND semantics so the admin can
+     * drill from a spike alert down to the exact rows that triggered it.
+     */
     list: adminProcedure
       .input(
         z
           .object({
             limit: z.number().int().min(1).max(200).optional(),
             beforeId: z.number().int().positive().optional(),
+            level: z.enum(["error", "warn"]).optional(),
+            source: z.string().min(1).max(128).optional(),
           })
           .optional(),
       )
       .query(async ({ input }) => {
         return listErrorLogs(input ?? {});
       }),
+    /** Distinct sources to populate the filter dropdown. */
+    sources: adminProcedure.query(async () => {
+      return listErrorSources();
+    }),
+    /** Wipe everything — destructive, used for demo/staging resets. */
     clear: adminProcedure.mutation(async () => {
       const count = await clearErrorLogs();
       return { cleared: count };
     }),
+    /**
+     * Drop rows older than `olderThanDays` (default 30). Returns affected
+     * row counts for both errorLogs and errorAlerts. Idempotent: running
+     * twice in a row makes the second call a no-op (count=0).
+     */
+    purgeOld: adminProcedure
+      .input(
+        z
+          .object({
+            olderThanDays: z.number().int().min(1).max(365).optional(),
+          })
+          .optional(),
+      )
+      .mutation(async ({ input }) => {
+        const days = input?.olderThanDays ?? 30;
+        const [logsPurged, alertsPurged] = await Promise.all([
+          purgeOldErrorLogs(days),
+          purgeOldErrorAlerts(days),
+        ]);
+        return { logsPurged, alertsPurged, olderThanDays: days };
+      }),
     alerts: adminProcedure
       .input(
         z

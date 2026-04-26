@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count as drizzleCount, desc, eq, gte, lt, sql } from "drizzle-orm";
 import {
   errorAlerts,
   errorLogs,
@@ -241,4 +241,26 @@ export async function listErrorAlerts(
     .from(errorAlerts)
     .orderBy(desc(errorAlerts.id))
     .limit(limit);
+}
+
+/**
+ * TTL purge for the alert history. Default 30 days. Returns affected count.
+ * Same shape/contract as `purgeOldErrorLogs` so the admin UI can wire one
+ * button to call both.
+ */
+export async function purgeOldErrorAlerts(
+  olderThanDays = 30,
+): Promise<number> {
+  if (olderThanDays < 1) throw new Error("olderThanDays must be >= 1");
+  const db = await getDb();
+  if (!db) return 0;
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  const result = await db
+    .delete(errorAlerts)
+    .where(lt(errorAlerts.createdAt, cutoff));
+  const affected =
+    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
+    (result as unknown as { affectedRows?: number }).affectedRows ??
+    0;
+  return affected;
 }

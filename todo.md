@@ -179,24 +179,39 @@
 
 
 ## Phase 10 — Friend system context + Shadow forwarding + Alerts
-- [ ] Create `CONTEXT.md` at project root with friend system info (CleanCloud + Nextiva)
-- [ ] Mirror context to Notion for cross-session persistence
-- [ ] Research Nextiva Messaging webhook / API for inbound SMS forwarding
-- [ ] Decide forwarding pattern (webhook → our `/api/shadow/inbound`, or Zapier bridge, or polling)
-- [ ] Build error alert engine: spike (5 errors/source/5min) + flapping (3 same-msg/10min) + 30min cooldown
-- [ ] Wire alert engine into `notifyOwner` and self-log to errorLogs
-- [ ] vitest: spike trigger, flapping trigger, cooldown suppression, alert self-log
-- [ ] Build `POST /api/shadow/inbound` endpoint with shared-secret auth + payload normalizer
-- [ ] Add `shadowMode` flag to conversations: never sendSms, draft-only, separate "Shadow Drafts" tab
-- [ ] vitest: shadow inbound auth gate, shadowMode draft-only contract
-- [ ] Full suite + checkpoint + deliver
+- [x] Create `CONTEXT.md` at project root with friend system info (CleanCloud + Nextiva)
+- [x] Mirror context to Notion for cross-session persistence
+- [x] Research Nextiva Messaging webhook / API for inbound SMS forwarding (no public inbound SMS webhook)
+- [x] Decide forwarding pattern: recommend OpenPhone migration (proposal in `mainstreet-ai/pilots/pilot1_dropshop/proposals/`)
+- [x] Build error alert engine: spike (5 errors/source/5min) + flapping (3 same-msg/10min) + 30min cooldown
+- [x] Wire alert engine into `notifyOwner` and self-log to errorLogs
+- [x] vitest: spike trigger, flapping trigger, cooldown suppression, alert self-log
+- [ ] Build `POST /api/shadow/inbound` endpoint with shared-secret auth + payload normalizer (deferred until friend OK)
+- [x] Add `shadowMode` flag to conversations + shadowSource on messages (DB scaffolding only)
+- [ ] vitest: shadow inbound auth gate, shadowMode draft-only contract (deferred)
+- [x] Full suite (152 passing) + checkpoint a4d6e1e1 / 34dd8a99
+- [x] Add level/source filters to errorLogs.list + Errors tab dropdowns
+- [x] Add purgeOld TTL helpers + admin Purge button (errorLogs + errorAlerts >30d)
+- [x] vitest: filter inputs, sources distinct, purge admin gate
 
 
 ## Pilot 2 — Salon / PT scheduling AI (research phase)
-- [ ] Research Glow Genius scheduling rules + overlap support
-- [ ] Research Phorest scheduling rules + overlap support (Phorest interview/consulting context)
-- [ ] Research Mindbody scheduling rules + overlap support
-- [ ] Research adjacent tools used by salons/PT: Vagaro, Booksy, Acuity, Square Appointments, GlossGenius, Fresha, Jane App
-- [ ] Catalog the "no double-booking / no overlap" pain in real reviews
-- [ ] Brainstorm AI agent edges: overlap scheduler, no-show prevention, upsell, gap-filler, dynamic pricing
-- [ ] Create Notion page "Pilot 2: Salon AI Scheduler" under MainStreet AI
+- [x] Research Glow Genius scheduling rules + overlap support
+- [x] Research Phorest scheduling rules + overlap support (Phorest interview/consulting context)
+- [x] Research Mindbody scheduling rules + overlap support
+- [x] Research adjacent tools used by salons/PT: Vagaro, Booksy, Acuity, Square Appointments, GlossGenius, Fresha, Jane App
+- [x] Catalog the "no double-booking / no overlap" pain in real reviews
+- [x] Brainstorm AI agent edges (10 edges, 2 killer combo: Overlap Auctioneer + Gap Filler)
+- [x] Create Notion page "Pilot 2: Salon AI Scheduler" under MainStreet AI
+- [x] Generate 7-page Korean proposal PDF + 2 UI mockups
+- [x] Generate 3 mood board options + user picked Modern Botanical
+- [x] Migrate all pilot materials into `/home/ubuntu/mainstreet-ai/` master folder
+
+## Phase 11 — Pilot 2 Salon demo (option C: separate /salon route)
+- [ ] mockSalon.ts: customers + stylists + services + appointments seed
+- [ ] salonIntents.ts: 6 intents (booking_request, availability_check, reschedule, cancel, service_question, pricing)
+- [ ] salonRouter sub-router (mirrors aiAgent runAgent pattern, separate from DropShop)
+- [ ] /salon page with split-screen layout (carry over Home patterns)
+- [ ] Industry switcher in nav (Laundry / Salon)
+- [ ] vitest contracts for salon mock + router
+- [ ] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped

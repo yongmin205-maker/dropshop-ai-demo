@@ -1,4 +1,4 @@
-import { desc, lt } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { errorLogs, type ErrorLog, type InsertErrorLog } from "../drizzle/schema";
 import { getDb } from "./db";
 import { redactPII } from "./pii";
@@ -81,18 +81,70 @@ export async function logServerError(input: LogErrorInput): Promise<void> {
 /**
  * Cursor-paginated list (newest first). Mirrors the §4.3 list helpers so the
  * admin UI can scroll through history without OFFSET scans.
+ *
+ * Filters:
+ *   - `level`: "error" | "warn" — exact match on level enum
+ *   - `source`: exact match on source string (e.g., "twilio.webhook")
+ *   - `beforeId`: cursor — return rows with id < beforeId (newest-first scroll)
+ *
+ * Empty filters means "all rows". Limit is clamped to [1, 200] (default 50).
  */
 export async function listErrorLogs(
-  opts: { limit?: number; beforeId?: number } = {},
+  opts: {
+    limit?: number;
+    beforeId?: number;
+    level?: "error" | "warn";
+    source?: string;
+  } = {},
 ): Promise<ErrorLog[]> {
   const db = await getDb();
   if (!db) return [];
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const conds = [] as ReturnType<typeof eq>[];
+  if (opts.beforeId) conds.push(lt(errorLogs.id, opts.beforeId));
+  if (opts.level) conds.push(eq(errorLogs.level, opts.level));
+  if (opts.source) conds.push(eq(errorLogs.source, opts.source));
   let q = db.select().from(errorLogs).$dynamic();
-  if (opts.beforeId) {
-    q = q.where(lt(errorLogs.id, opts.beforeId));
-  }
+  if (conds.length === 1) q = q.where(conds[0]);
+  else if (conds.length > 1) q = q.where(and(...conds));
   return q.orderBy(desc(errorLogs.id)).limit(limit);
+}
+
+/**
+ * Distinct sources currently present in the table — feeds the admin dropdown.
+ * Capped at 64 to avoid runaway dropdowns.
+ */
+export async function listErrorSources(): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .selectDistinct({ source: errorLogs.source })
+    .from(errorLogs)
+    .orderBy(errorLogs.source)
+    .limit(64);
+  return rows.map((r) => r.source);
+}
+
+/**
+ * TTL purge — drop rows older than N days. Returns affected row count.
+ * Default 30 days. Caller is responsible for scheduling (cron / admin button).
+ *
+ * Uses Date arithmetic in JS (not SQL NOW()) so the purge cut-off is
+ * deterministic from the caller's POV — easier to reason about in tests and
+ * cross-timezone. createdAt is stored as Unix ms (see schema.ts).
+ */
+export async function purgeOldErrorLogs(olderThanDays = 30): Promise<number> {
+  if (olderThanDays < 1) throw new Error("olderThanDays must be >= 1");
+  const db = await getDb();
+  if (!db) return 0;
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  const result = await db
+    .delete(errorLogs)
+    .where(lt(errorLogs.createdAt, cutoff));
+  const affected = (result as unknown as { affectedRows?: number }[])[0]?.affectedRows
+    ?? (result as unknown as { affectedRows?: number }).affectedRows
+    ?? 0;
+  return affected;
 }
 
 export async function clearErrorLogs(): Promise<number> {

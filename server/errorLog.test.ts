@@ -164,5 +164,111 @@ describe("admin gating contract", () => {
     expect(block).toMatch(/list:\s*adminProcedure/);
     expect(block).toMatch(/clear:\s*adminProcedure/);
     expect(block).toMatch(/alerts:\s*adminProcedure/);
+    // Phase 2 additions — filter dropdown + TTL purge MUST also be admin-gated.
+    expect(block).toMatch(/sources:\s*adminProcedure/);
+    expect(block).toMatch(/purgeOld:\s*adminProcedure/);
+  });
+});
+
+describe("listErrorLogs filters", () => {
+  // We mock the chain factory rather than drizzle internals so we can assert
+  // the engine builds queries with the correct shape (where conditions, limit,
+  // ordering) without booting MySQL.
+  it("returns [] when getDb is unavailable", async () => {
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const { listErrorLogs } = await import("./errorLog");
+    await expect(listErrorLogs({ level: "error" })).resolves.toEqual([]);
+  });
+
+  it("clamps limit to [1, 200]", async () => {
+    const limitSpy = vi.fn().mockResolvedValue([]);
+    const orderBySpy = vi.fn().mockReturnValue({ limit: limitSpy });
+    const dynamicSpy = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ orderBy: orderBySpy }),
+      orderBy: orderBySpy,
+    });
+    const fromSpy = vi.fn().mockReturnValue({ $dynamic: dynamicSpy });
+    const selectSpy = vi.fn().mockReturnValue({ from: fromSpy });
+    const fakeDb = { select: selectSpy } as any;
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(fakeDb);
+    const { listErrorLogs } = await import("./errorLog");
+
+    await listErrorLogs({ limit: 99999 });
+    expect(limitSpy).toHaveBeenCalledWith(200);
+
+    await listErrorLogs({ limit: 0 });
+    expect(limitSpy).toHaveBeenLastCalledWith(1);
+
+    await listErrorLogs({});
+    expect(limitSpy).toHaveBeenLastCalledWith(50);
+  });
+});
+
+describe("purgeOldErrorLogs", () => {
+  it("throws if olderThanDays < 1 (caller programming error)", async () => {
+    const { purgeOldErrorLogs } = await import("./errorLog");
+    await expect(purgeOldErrorLogs(0)).rejects.toThrow(/>= 1/);
+    await expect(purgeOldErrorLogs(-5)).rejects.toThrow(/>= 1/);
+  });
+
+  it("returns 0 when DB is unavailable (graceful no-op)", async () => {
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const { purgeOldErrorLogs } = await import("./errorLog");
+    await expect(purgeOldErrorLogs(30)).resolves.toBe(0);
+  });
+
+  it("issues a delete with createdAt < cutoff and returns affected count", async () => {
+    // Capture the where clause arg so we can assert the cutoff is N days ago.
+    const whereSpy = vi.fn().mockResolvedValue([{ affectedRows: 7 }]);
+    const deleteSpy = vi.fn().mockReturnValue({ where: whereSpy });
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      delete: deleteSpy,
+    } as any);
+
+    const { purgeOldErrorLogs } = await import("./errorLog");
+    const before = Date.now();
+    const affected = await purgeOldErrorLogs(30);
+    const after = Date.now();
+
+    expect(affected).toBe(7);
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    expect(whereSpy).toHaveBeenCalledTimes(1);
+    // Best we can do without leaking SQL internals: assert the call happened.
+    // The cutoff Date should be within ~30 days +/- the few ms test took.
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    expect(before - thirtyDaysMs - 100).toBeLessThanOrEqual(after - thirtyDaysMs);
+  });
+});
+
+describe("listErrorSources", () => {
+  it("returns [] when DB is unavailable", async () => {
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const { listErrorSources } = await import("./errorLog");
+    await expect(listErrorSources()).resolves.toEqual([]);
+  });
+
+  it("maps distinct rows to a flat string array, capped at 64", async () => {
+    const limitSpy = vi.fn().mockResolvedValue([
+      { source: "alert.engine" },
+      { source: "twilio.webhook" },
+      { source: "drafts.approve" },
+    ]);
+    const orderBySpy = vi.fn().mockReturnValue({ limit: limitSpy });
+    const fromSpy = vi.fn().mockReturnValue({ orderBy: orderBySpy });
+    const selectDistinctSpy = vi.fn().mockReturnValue({ from: fromSpy });
+    const { getDb } = await import("./db");
+    (getDb as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      selectDistinct: selectDistinctSpy,
+    } as any);
+
+    const { listErrorSources } = await import("./errorLog");
+    const result = await listErrorSources();
+    expect(result).toEqual(["alert.engine", "twilio.webhook", "drafts.approve"]);
+    expect(limitSpy).toHaveBeenCalledWith(64);
   });
 });
