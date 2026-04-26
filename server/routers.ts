@@ -55,6 +55,7 @@ import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
 import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
 import { clearErrorLogs, listErrorLogs, logServerError } from "./errorLog";
+import { listErrorAlerts } from "./alertEngine";
 
 async function ensureAllSeeded() {
   await ensureSeeded();
@@ -715,6 +716,17 @@ export const appRouter = router({
       const count = await clearErrorLogs();
       return { cleared: count };
     }),
+    alerts: adminProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(200).optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        return listErrorAlerts(input ?? {});
+      }),
   }),
 });
 

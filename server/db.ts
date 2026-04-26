@@ -139,12 +139,25 @@ export async function getUserByOpenId(openId: string) {
 
 /* ----- DropShop conversation helpers ----- */
 
-export async function getOrCreateConversation(phone: string, customerName?: string) {
+export async function getOrCreateConversation(
+  phone: string,
+  customerName?: string,
+  shadow?: { source: string },
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   // Race-safe upsert: relies on UNIQUE(phone). Two concurrent inbound webhooks
   // for the same brand-new phone both succeed; only one row is created.
-  const insertValue: InsertConversation = { phone, customerName: customerName ?? null };
+  // Phase 10 — if `shadow.source` is provided we tag the conversation as
+  // shadowMode=1 so downstream code (sendSms, UI) can branch on it. We only
+  // SET the shadow fields on insert; existing live conversations are not
+  // demoted to shadow by accident.
+  const insertValue: InsertConversation = {
+    phone,
+    customerName: customerName ?? null,
+    shadowMode: shadow ? 1 : 0,
+    shadowSource: shadow?.source ?? null,
+  };
   await db
     .insert(conversations)
     .values(insertValue)

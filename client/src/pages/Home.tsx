@@ -861,6 +861,9 @@ function ErrorsPanel() {
   const errors = trpc.errorLogs.list.useQuery(undefined, {
     refetchInterval: useVisiblePollInterval(8000),
   });
+  const alerts = trpc.errorLogs.alerts.useQuery(undefined, {
+    refetchInterval: useVisiblePollInterval(8000),
+  });
   const clearAll = trpc.errorLogs.clear.useMutation({
     onSuccess: ({ cleared }) => {
       toast.success(cleared === 0 ? "No errors to clear" : `Cleared ${cleared} error(s)`);
@@ -900,6 +903,35 @@ function ErrorsPanel() {
         </div>
       </CardHeader>
       <CardContent>
+        {alerts.data && alerts.data.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <div className="text-[10px] font-medium uppercase tracking-wide text-amber-700">
+              Fired alerts (notifyOwner pushed)
+            </div>
+            {alerts.data.slice(0, 5).map((a) => (
+              <div
+                key={a.id}
+                className="rounded-md border border-amber-200 bg-amber-50/70 p-2 text-xs flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+                    {a.kind === "spike" ? "SPIKE" : "FLAP"}
+                  </Badge>
+                  <span className="font-medium text-[var(--ink)] truncate">{a.source}</span>
+                  <span className="text-amber-700">
+                    {a.count}× in {Math.round(a.windowSeconds / 60)}m
+                  </span>
+                  {a.message && (
+                    <span className="text-muted-foreground truncate">· {a.message}</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted-foreground shrink-0 ml-2">
+                  {format(new Date(a.createdAt), "MMM d · HH:mm")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {errors.isLoading ? (
           <div className="text-sm text-muted-foreground py-12 text-center">Loading…</div>
         ) : rows.length === 0 ? (

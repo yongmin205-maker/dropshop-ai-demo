@@ -176,3 +176,17 @@
 - [x] Admin-only "Errors" tab in Home.tsx (only render when user is admin)
 - [x] vitest: writes row, swallows DB-down, gating contract
 - [x] Run full suite, save checkpoint
+
+
+## Phase 10 — Friend system context + Shadow forwarding + Alerts
+- [ ] Create `CONTEXT.md` at project root with friend system info (CleanCloud + Nextiva)
+- [ ] Mirror context to Notion for cross-session persistence
+- [ ] Research Nextiva Messaging webhook / API for inbound SMS forwarding
+- [ ] Decide forwarding pattern (webhook → our `/api/shadow/inbound`, or Zapier bridge, or polling)
+- [ ] Build error alert engine: spike (5 errors/source/5min) + flapping (3 same-msg/10min) + 30min cooldown
+- [ ] Wire alert engine into `notifyOwner` and self-log to errorLogs
+- [ ] vitest: spike trigger, flapping trigger, cooldown suppression, alert self-log
+- [ ] Build `POST /api/shadow/inbound` endpoint with shared-secret auth + payload normalizer
+- [ ] Add `shadowMode` flag to conversations: never sendSms, draft-only, separate "Shadow Drafts" tab
+- [ ] vitest: shadow inbound auth gate, shadowMode draft-only contract
+- [ ] Full suite + checkpoint + deliver

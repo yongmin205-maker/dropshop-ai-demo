@@ -2,6 +2,7 @@ import { desc, lt } from "drizzle-orm";
 import { errorLogs, type ErrorLog, type InsertErrorLog } from "../drizzle/schema";
 import { getDb } from "./db";
 import { redactPII } from "./pii";
+import { evaluateAlerts } from "./alertEngine";
 
 /**
  * Phase 9 — Admin error logging
@@ -63,6 +64,17 @@ export async function logServerError(input: LogErrorInput): Promise<void> {
   } catch (writeErr) {
     // eslint-disable-next-line no-console
     console.warn("[errorLog] failed to persist error:", writeErr);
+    return; // skip alert evaluation if the row never landed
+  }
+
+  // Phase 10 — fire spike/flapping alerts (best-effort, never throws)
+  // Skip alert.engine self-loops: do not re-evaluate alerts triggered by
+  // the alert engine writing its own mirror row.
+  if (input.source !== "alert.engine") {
+    await evaluateAlerts({
+      source: input.source,
+      message: toMessage(input.err),
+    });
   }
 }
 

@@ -38,6 +38,16 @@ export const conversations = mysqlTable("conversations", {
   customerName: varchar("customerName", { length: 128 }),
   lastIntent: varchar("lastIntent", { length: 64 }),
   escalated: int("escalated").default(0).notNull(), // 0/1
+  /**
+   * Phase 10 — Shadow mode flag. When 1, this conversation belongs to a
+   * shadow forwarding source (e.g., friend's OpenPhone forwarding into our
+   * /api/shadow/inbound endpoint). The pipeline still runs and drafts are
+   * still produced, but `sendSms` MUST be a no-op for these conversations
+   * — we never reply to the customer because we are not the sender.
+   */
+  shadowMode: int("shadowMode").default(0).notNull(),
+  /** Free-form label like "openphone" / "twilio" so we can group shadow drafts in the UI. */
+  shadowSource: varchar("shadowSource", { length: 32 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -55,7 +65,7 @@ export const messages = mysqlTable(
     sender: mysqlEnum("sender", ["customer", "ai", "manager"]).notNull(),
     body: text("body").notNull(),
     intent: varchar("intent", { length: 64 }),
-    mode: mysqlEnum("mode", ["simulator", "live"]).default("simulator").notNull(),
+    mode: mysqlEnum("mode", ["simulator", "live", "shadow"]).default("simulator").notNull(),
     /** Two-phase send tracking. queued = persisted but not yet handed to Twilio. sent = Twilio accepted. failed = upstream error. delivered = optional later state. */
     status: mysqlEnum("status", ["queued", "sent", "failed", "delivered"]).default("sent").notNull(),
     /** Twilio MessageSid — outbound: returned by Messages.create; inbound: provided by Twilio webhook. UNIQUE so duplicate webhook deliveries become no-ops. */
@@ -285,3 +295,32 @@ export const errorLogs = mysqlTable("errorLogs", {
 });
 export type ErrorLog = typeof errorLogs.$inferSelect;
 export type InsertErrorLog = typeof errorLogs.$inferInsert;
+
+
+/**
+ * Phase 10 — Error alert engine
+ * -----------------------------
+ *
+ * `errorAlerts` records every alert the spike/flapping detectors fire. The
+ * table doubles as the cooldown ledger: before firing we look up the most
+ * recent alert with the same `key` and skip if it is still within the
+ * cooldown window. Each fired alert is also `notifyOwner`-pushed and
+ * mirrored back into `errorLogs` (level=warn, source="alert.engine") so it
+ * shows up in the same admin Errors tab.
+ *
+ *   key examples:
+ *     "spike:TwilioWebhook"
+ *     "flap:drafts.approve|TRPCError: rate limited"
+ */
+export const errorAlerts = mysqlTable("errorAlerts", {
+  id: int("id").autoincrement().primaryKey(),
+  key: varchar("key", { length: 256 }).notNull(),
+  kind: mysqlEnum("kind", ["spike", "flap"]).notNull(),
+  source: varchar("source", { length: 128 }).notNull(),
+  message: text("message"),
+  count: int("count").notNull(), // how many errors triggered this alert
+  windowSeconds: int("windowSeconds").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type ErrorAlert = typeof errorAlerts.$inferSelect;
+export type InsertErrorAlert = typeof errorAlerts.$inferInsert;

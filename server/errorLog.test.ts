@@ -33,6 +33,12 @@ vi.mock("./pii", () => {
   };
 });
 
+// Mock alertEngine so logServerError tests stay isolated from the spike/flap
+// detector. The detector is exercised by alertEngine.test.ts directly.
+vi.mock("./alertEngine", () => ({
+  evaluateAlerts: vi.fn().mockResolvedValue([]),
+}));
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -157,5 +163,6 @@ describe("admin gating contract", () => {
     const block = src.slice(headerIdx, headerIdx + 2000);
     expect(block).toMatch(/list:\s*adminProcedure/);
     expect(block).toMatch(/clear:\s*adminProcedure/);
+    expect(block).toMatch(/alerts:\s*adminProcedure/);
   });
 });
