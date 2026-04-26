@@ -190,3 +190,13 @@
 - [ ] Add `shadowMode` flag to conversations: never sendSms, draft-only, separate "Shadow Drafts" tab
 - [ ] vitest: shadow inbound auth gate, shadowMode draft-only contract
 - [ ] Full suite + checkpoint + deliver
+
+
+## Pilot 2 — Salon / PT scheduling AI (research phase)
+- [ ] Research Glow Genius scheduling rules + overlap support
+- [ ] Research Phorest scheduling rules + overlap support (Phorest interview/consulting context)
+- [ ] Research Mindbody scheduling rules + overlap support
+- [ ] Research adjacent tools used by salons/PT: Vagaro, Booksy, Acuity, Square Appointments, GlossGenius, Fresha, Jane App
+- [ ] Catalog the "no double-booking / no overlap" pain in real reviews
+- [ ] Brainstorm AI agent edges: overlap scheduler, no-show prevention, upsell, gap-filler, dynamic pricing
+- [ ] Create Notion page "Pilot 2: Salon AI Scheduler" under MainStreet AI
