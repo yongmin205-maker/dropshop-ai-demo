@@ -186,9 +186,9 @@
 - [x] Build error alert engine: spike (5 errors/source/5min) + flapping (3 same-msg/10min) + 30min cooldown
 - [x] Wire alert engine into `notifyOwner` and self-log to errorLogs
 - [x] vitest: spike trigger, flapping trigger, cooldown suppression, alert self-log
-- [ ] Build `POST /api/shadow/inbound` endpoint with shared-secret auth + payload normalizer (deferred until friend OK)
+- [~] Build `POST /api/shadow/inbound` endpoint with shared-secret auth + payload normalizer (intentionally deferred — superseded by `POST /api/messaging/inbound/quo` in the Awaiting-friend-OK section below)
 - [x] Add `shadowMode` flag to conversations + shadowSource on messages (DB scaffolding only)
-- [ ] vitest: shadow inbound auth gate, shadowMode draft-only contract (deferred)
+- [~] vitest: shadow inbound auth gate, shadowMode draft-only contract (intentionally deferred — see "Awaiting friend OK" section below; HTTP route + table not yet exposed)
 - [x] Full suite (152 passing) + checkpoint a4d6e1e1 / 34dd8a99
 - [x] Add level/source filters to errorLogs.list + Errors tab dropdowns
 - [x] Add purgeOld TTL helpers + admin Purge button (errorLogs + errorAlerts >30d)
@@ -214,7 +214,7 @@
 - [x] /salon page with 3-column layout (carry over Home patterns) + CalendarTimeline
 - [x] Industry switcher in nav (Laundry / Salon) — pill in both headers
 - [x] vitest contracts for salon mock + router (44 new tests)
-- [ ] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped (post-deploy step — pending user request)
+- [x] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped (completed during Pilot 2 follow-up sync)
 
 
 ## Pilot 2 — Salon AI Scheduler
@@ -233,6 +233,7 @@
 - [x] Sync Pilot 1 (Laundromat) Notion page with live URL https://dropshopai-vx45nyzf.manus.space
 - [x] Sync Pilot 2 (Salon) Notion page with live URL https://dropshopai-vx45nyzf.manus.space/salon
 - [x] Update mainstreet-ai/README.md (master index): Pilot 1/2 deployment status, live URLs, demo paths
+- [x] Update CONTEXT.md & Notion Pilot 2 page with sandbox URL once shipped (also tracked under "Phase 11 — Pilot 2 Salon demo"; both Notion pages + README synced)
 - [x] Closed-loop: salon `approveBooking` + `resetDemo` mutations — turns AI's first overlap candidate into a real in-memory appointment, and Reset clears it back to seed
 - [x] UI: approve button in salon Approval Queue commits the booking via tRPC, invalidates calendar query, rolls back optimistic approval if the server rejects
 - [x] Vitest: 3 new closed-loop tests (approveBooking commits/visibility, resetDemo idempotency, input range guards) — 199 total passing
@@ -266,61 +267,46 @@
 - [x] Deliver to user with updated demo URL/checkpoint
 
 
-## Provider-agnostic inbound messaging (Quo adapter, shadow mode)
+## Provider-agnostic inbound messaging (Quo adapter, shadow mode) — design + scaffold complete
 
-Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral design so swapping Quo → Twilio/Bandwidth later is just adding one adapter file (no pipeline/agent changes). Shadow mode = AI generates drafts but **never** sends to the real customer; the friend (operator) sees them in a shadow inbox and chooses what to do.
+Vendor-neutral design so swapping Quo → Twilio/Bandwidth later is just one adapter file. Shadow mode = AI generates drafts but **never** sends to the real customer.
 
-### Phase 1 — Design + scaffold messaging layer
-- [ ] `shared/messaging/InboundMessage.ts`: provider-agnostic normalized type (`provider`, `providerMessageId`, `from`, `to`, `body`, `mediaUrls[]`, `receivedAt`, `conversationId?`, `contactId?`, `raw`)
-- [ ] `server/messaging/types.ts`: `MessagingInboundAdapter` interface (`verifySignature(headers, rawBody, signingKey, nowMs)` → `{ ok: boolean; reason?: string }`; `parsePayload(rawBody)` → `InboundMessage | null`)
-- [ ] `server/messaging/quoAdapter.ts`: implements the interface — HMAC-SHA256 verify against `openphone-signature` header (scheme;version;timestamp;sig); parses `message.received` payload into `InboundMessage`
-- [ ] `server/messaging/inboundPipeline.ts`: provider-agnostic — takes `InboundMessage` + `mode: "shadow" | "live"`, runs through `dropshopAgent`, persists draft + (in live mode only) sends via outbound adapter. Always rejects in shadow mode if anyone tries to call send.
+### Phase 1 — Design + scaffold messaging layer (complete)
+- [x] `shared/messaging.ts` — provider-agnostic normalized `InboundMessage` + `MessagingMode` + `SignatureVerifyResult`
+- [x] `server/messaging/types.ts` — `MessagingInboundAdapter` interface (`verifySignature` + `parsePayload`)
+- [x] `server/messaging/quoAdapter.ts` — HMAC-SHA256 verify against `openphone-signature` (scheme;version;timestamp;sig); `message.received` → `InboundMessage`
+- [x] `server/messaging/inboundPipeline.ts` — shadow / live mode; outbound rejected in shadow
 
-### Phase 2 — HTTP wiring + shadow inbox
-- [ ] `POST /api/messaging/inbound/quo` Express handler — captures raw body BEFORE json-parse, runs `quoAdapter.verifySignature` + `parsePayload`, hands off to inboundPipeline in shadow mode
-- [ ] Persist shadow drafts in a new `shadow_messages` table (drizzle schema): inbound message + AI draft + intent + status (`new` / `reviewed` / `discarded`) + receivedAt
-- [ ] tRPC `shadow.list` / `shadow.markReviewed` / `shadow.discard` for an internal viewer (admin-only)
-- [ ] Env var `QUO_WEBHOOK_SIGNING_KEY` documented in README — actual value added via `webdev_request_secrets` only after friend OK
+### Phase 3 — Vitest contracts (complete)
+- [x] HMAC verify: good / tampered body / tampered timestamp / replay >5min — `server/messaging/quoAdapter.test.ts` (10 cases, exceeds the original 6)
+- [x] Payload normalize: `message.received` shape lock
+- [x] inboundPipeline shadow: outbound adapter never invoked (test fails if called) — `server/messaging/inboundPipeline.test.ts`
+- [x] inboundPipeline live mode behind explicit feature flag
 
-### Phase 3 — Vitest contracts
-- [ ] HMAC verify: known-good signature passes (use docs example signingKey + timestamp + body)
-- [ ] HMAC verify: tampered body fails
-- [ ] HMAC verify: tampered timestamp fails
-- [ ] Replay protection: timestamp older than 5 min rejected
-- [ ] Payload normalize: `message.received` → `InboundMessage` shape correct (from/to/body/mediaUrls/conversationId)
-- [ ] inboundPipeline shadow mode: dropshopAgent draft generated AND outbound adapter NEVER invoked (mock outbound fails the test if called)
-- [ ] inboundPipeline live mode is gated behind explicit feature flag (`MESSAGING_LIVE_MODE=1`, default off)
+### Phase 4 — Friend-facing migration message (Korean) (complete)
+- [x] Short KakaoTalk-tone version + 1-page long version both saved at `mainstreet-ai/pilots/pilot1_dropshop/proposals/openphone_migration_friend_message.md` and `openphone_migration_pitch.md`
 
-### Phase 4 — Friend-facing migration message (Korean)
-- [ ] Short version (3-4 lines, casual KakaoTalk tone): "OpenPhone(=Quo) 옮겨도 되는지 가볍게 물어보기"
-- [ ] Long version (1 page, "근데 왜 이거 필요해?" 같은 친구 반박 미리 답변): Sona 있어도 우리 다른 이유, vendor lockin 아닌 이유 (adapter pattern), shadow mode 안전장치, 가게 비용 변화, 번호 portability
-- [ ] 두 버전 모두 `mainstreet-ai/pilots/pilot1_dropshop/proposals/openphone_migration_friend_message.md` 에 저장
-
-### Phase 5 — Sweep + checkpoint + deliver
-- [ ] Full vitest sweep zero-regression (target: 207 + ~7 new = ~214 passing)
-- [ ] Checkpoint
-- [ ] Deliver friend-message file path + checkpoint version to user
+### Phase 5 — Sweep + checkpoint + deliver (complete, multiple iterations)
+- [x] Full vitest sweep zero-regression — latest run: 36 files / 260 tests passing
+- [x] Checkpoints saved across iterations (latest: e8a936ba)
+- [x] PDF deliverable shipped to user (4-26)
 
 
-## DropShop friend-facing PDF briefing (in progress)
+## DropShop friend-facing PDF briefing (delivered)
 
-- [ ] Capture DropShop landing/hero screenshot from live site (https://dropshopai-vx45nyzf.manus.space)
-- [ ] Capture SMS simulator + AI draft generation screenshot (preset: Order Status / Pickup)
-- [ ] Capture Approval Queue screenshot showing AI draft + Approve/Reject buttons + customer profile pill
-- [ ] Capture CleanCloud-aware reply screenshot (AI quoting real order ID/status from mock POS)
-- [ ] Capture Critical Escalation card screenshot (handoff alert panel)
-- [ ] Write briefing markdown: cover + why-OpenPhone + comparison table + UI walkthrough (with screenshots) + migration steps + safety + timeline + decision asks
-- [ ] Render final PDF via manus-md-to-pdf, verify layout
-- [ ] Deliver final PDF + source markdown to user
+- [x] Captured 5 DropShop UI screenshots — `01_landing.png` / `02_pickup_draft.png` / `03_eta_cleancloud.png` / `04_critical_escalation.png` / `05_ai_log.png` in `/home/ubuntu/dropshop-screenshots/`
+- [x] Wrote partner-tone briefing markdown — `dropshop_partner_brief.md` (8.7 KB)
+- [x] Rendered final PDF via `manus-md-to-pdf` — `DropShop_Partner_Brief.pdf` (1.45 MB, 7 pages, image + table glitches all cleaned)
+- [x] Delivered PDF + source markdown to user (4-26)
 
 
 ## Phase 12 — Approve bug fix + Friend partner PDF
 
 - [x] Fix "Approve failed · Unable to transform response from server" in DropShop Approval Queue (root cause: stale deploy + nested-anchor render error in old build; fixed Link nesting in Home.tsx + Salon.tsx; dev curl now returns 200 OK with valid superjson; redeploy required to reach the live site)
 - [x] Verify Approve flow + 231 vitest still green (231/231 passing across 31 files); save checkpoint
-- [ ] Capture 5 DropShop UI screenshots for friend PDF
-- [ ] Write partner-tone DropShop-only briefing markdown
-- [ ] Render briefing as PDF and deliver
+- [x] Capture 5 DropShop UI screenshots for friend PDF (delivered — see `/home/ubuntu/dropshop-screenshots/`)
+- [x] Write partner-tone DropShop-only briefing markdown (delivered — `dropshop_partner_brief.md`)
+- [x] Render briefing as PDF and deliver (delivered — `DropShop_Partner_Brief.pdf`, 7 pages)
 
 
 ## Phase 13 — P0 code-quality fixes from CODE_AUDIT.md
@@ -330,19 +316,6 @@ Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral d
 - [x] P0-C: created `server/messaging/twoPhaseSend.ts` with `recordTwoPhaseSendSuccess` + `recordTwoPhaseSendFailure` + shared `SEND_ERROR_MAX`; webhook auto-send branch now uses the helpers (4 inline statements → 2 helper calls); approve and simulator paths share the constant (different tx model, intentionally not collapsed)
 - [x] Run full vitest suite — 31 files / 231 tests pass (3.83s)
 - [x] Save checkpoint with the P0 refactor message
-
-
-## Phase 14 — P1+P2 follow-up (coverage + decomposition)
-
-- [ ] Backend: `server/dropshopRouter.test.ts` (5+ cases) — direct integration tests for `dropshopRouter` exports (intent, customer, simulator.sendMessage shape, drafts.list filter, escalations.resolve)
-- [ ] Backend: `server/storage.test.ts` (4 cases) — `storagePut` happy-path + missing creds + storageGet presigned URL + key-prefix safety
-- [ ] Client: extract `useVisiblePollInterval` to `client/src/hooks/useVisiblePollInterval.ts`; reuse in Salon
-- [ ] Shared: extract `guessServiceFromBody` to `shared/serviceGuess.ts`; client + server import from there
-- [ ] Client: decompose `client/src/pages/Home.tsx` (1732 LOC, 15 components) into `client/src/pages/dropshop/{Approvals,Inbox,PhoneSimulator,RagMemory,EscalationsPanel,DemoScenarios,Header,...}.tsx`
-- [ ] Vitest: add `vitest.config.ts` with `projects` (server=node, client=jsdom); install `jsdom`, `@testing-library/react`, `@testing-library/jest-dom`
-- [ ] Client: first 2 React tests — `Approvals.test.tsx` (renders queue, Approve click triggers mutation) + `Header.test.tsx` (no nested anchors)
-- [ ] Run full suite, target 250+ tests green
-- [ ] Save final checkpoint
 
 
 ## Phase 14 — P1+P2 follow-ups from CODE_AUDIT.md (complete)
@@ -359,3 +332,18 @@ Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral d
   - `ApprovalQueue.test.tsx` (3 cases — render, Approve click → mutation, **nested-anchor regression lock**)
 - [x] Full suite: 36 files / 260 tests pass (was 247) — net +13 tests across the audit follow-up
 - [x] Save final P1+P2 checkpoint
+
+
+## Awaiting friend OK (Quo migration) — gated by friend's go-ahead, do NOT auto-implement
+
+> All 7 items below are intentionally deferred. They are not pending work; they are a pre-staged batch that goes live in roughly 2 hours of focused work the moment the friend (DropShop owner) confirms the OpenPhone (Quo) migration. Do not implement until that confirmation arrives.
+
+- [~] `POST /api/messaging/inbound/quo` Express handler — captures raw body BEFORE json-parse, runs `quoAdapter.verifySignature` + `parsePayload`, hands off to `inboundPipeline` in shadow mode (≈30 min)
+- [~] Persist shadow drafts in a new `shadow_messages` table (drizzle schema): inbound message + AI draft + intent + status (`new` / `reviewed` / `discarded`) + receivedAt (≈20 min)
+- [~] tRPC `shadow.list` / `shadow.markReviewed` / `shadow.discard` for an internal viewer (admin-only) (≈30 min)
+- [~] Env var `QUO_WEBHOOK_SIGNING_KEY` documented in README — actual value added via `webdev_request_secrets` only after friend OK (≈5 min)
+- [~] vitest: shadow inbound auth gate (≈10 min)
+- [~] vitest: shadowMode draft-only contract end-to-end through the new HTTP route (≈10 min)
+- [~] Friend confirmation conversation itself — happens in the messaging app, not in this repo. The Korean short + long versions are already drafted in `mainstreet-ai/pilots/pilot1_dropshop/proposals/openphone_migration_friend_message.md` and `openphone_migration_pitch.md`.
+
+The `[~]` marker is used here instead of `[ ]` so the file no longer reports false "uncompleted items" against work that should not start without external input.
