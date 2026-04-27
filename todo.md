@@ -347,3 +347,14 @@ Vendor-neutral design so swapping Quo → Twilio/Bandwidth later is just one ada
 - [~] Friend confirmation conversation itself — happens in the messaging app, not in this repo. The Korean short + long versions are already drafted in `mainstreet-ai/pilots/pilot1_dropshop/proposals/openphone_migration_friend_message.md` and `openphone_migration_pitch.md`.
 
 The `[~]` marker is used here instead of `[ ]` so the file no longer reports false "uncompleted items" against work that should not start without external input.
+
+
+## Phase 15 — Live "Agent error · Unable to transform response from server" bug
+
+- [x] Located: `dropshop.simulator.sendMessage` (and every other mutation) returns HTTP 403 from the live deploy because `originGuard` rejects the Origin
+- [x] Root cause: behind Manus reverse proxy, Express's raw `Host` header is the internal Cloud-Run host, not the public `dropshopai-vx45nyzf.manus.space` that the browser puts in `Origin`. Same-host fallback in `originGuard` therefore returns 403, and tRPC's superjson cannot decode `{"error":"..."}` as a structured response
+- [x] Fix 1: `app.set("trust proxy", true)` in `server/_core/index.ts` so `req.hostname` / `req.protocol` reflect `x-forwarded-*`
+- [x] Fix 2: `originHostMatchesRequest` now tries `req.hostname`, `x-forwarded-host`, and raw `Host` (with port stripping + lowercase) before declaring a mismatch
+- [x] Fix 3: log first 5 CSRF rejections with full header dump so future live-only mismatches can be diagnosed without redeploy
+- [x] Vitest sweep: 36 files / 260 tests pass (existing originGuard integration suite already covers the proxy-host scenario)
+- [x] Save checkpoint and hand off to user for Publish

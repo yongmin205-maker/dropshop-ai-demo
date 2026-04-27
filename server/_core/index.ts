@@ -32,6 +32,11 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 
 async function startServer() {
   const app = express();
+  // §5.10 CSRF: behind Manus reverse proxy the original Host header lives in
+  // x-forwarded-host. Trust the proxy so req.hostname / req.protocol reflect
+  // the public origin and originGuard's same-host check matches the URL the
+  // browser sees (e.g. https://dropshopai-vx45nyzf.manus.space).
+  app.set("trust proxy", true);
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));

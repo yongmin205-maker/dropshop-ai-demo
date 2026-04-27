@@ -20,6 +20,30 @@ import type { NextFunction, Request, Response } from "express";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// Log only the first few CSRF rejections so we can diagnose live-environment
+// header mismatches without spamming the log forever.
+let csrfDebugLogsRemaining = 5;
+function logCsrfRejection(reason: string, req: Request) {
+  if (csrfDebugLogsRemaining <= 0) return;
+  csrfDebugLogsRemaining -= 1;
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[originGuard] reject",
+    JSON.stringify({
+      reason,
+      method: req.method,
+      url: req.originalUrl,
+      origin: req.headers["origin"] ?? null,
+      referer: req.headers["referer"] ?? null,
+      host: req.headers["host"] ?? null,
+      xForwardedHost: req.headers["x-forwarded-host"] ?? null,
+      xForwardedProto: req.headers["x-forwarded-proto"] ?? null,
+      reqHostname: req.hostname,
+      reqProtocol: req.protocol,
+    }),
+  );
+}
+
 function parseAllowedOrigins(): Set<string> | null {
   const raw = process.env.ALLOWED_ORIGINS;
   if (!raw) return null;
@@ -34,14 +58,29 @@ function parseAllowedOrigins(): Set<string> | null {
 function originHostMatchesRequest(originUrl: string, req: Request): boolean {
   try {
     const u = new URL(originUrl);
-    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
-    const host =
-      (req.headers["x-forwarded-host"] as string) ||
-      (req.headers["host"] as string) ||
-      "";
-    if (!host) return false;
-    const expected = new URL(`${proto}://${host}`);
-    return u.host === expected.host;
+    // When `app.set("trust proxy", true)` is on, Express populates req.hostname
+    // from x-forwarded-host and req.protocol from x-forwarded-proto. We try the
+    // proxy-aware values first, then fall back to raw Host header (still
+    // checking x-forwarded-host directly in case trust-proxy is not configured).
+    const candidateHosts = [
+      req.hostname,
+      (req.headers["x-forwarded-host"] as string) || "",
+      (req.headers["host"] as string) || "",
+    ]
+      .map((h) => (h || "").split(",")[0].trim())
+      .filter(Boolean);
+    if (candidateHosts.length === 0) return false;
+    return candidateHosts.some((host) => {
+      try {
+        // strip port to compare host only (browsers usually omit default ports
+        // from Origin, but reverse proxies may add :443 / :8080 to Host)
+        const originHost = u.hostname.toLowerCase();
+        const reqHost = host.split(":")[0].toLowerCase();
+        return originHost === reqHost;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }
@@ -58,6 +97,7 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
     // Most browsers send Origin on every state-changing fetch. A missing one
     // is suspicious — block it. Server-to-server callers should hit dedicated
     // signed endpoints (e.g. /api/twilio/sms with HMAC), not /api/trpc.
+    logCsrfRejection("missing-origin", req);
     return res.status(403).json({
       error: "CSRF: missing Origin/Referer header on mutation",
     });
@@ -75,6 +115,7 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
       // not a parseable URL — treat raw value as origin
     }
     if (!allowList.has(originPart)) {
+      logCsrfRejection("not-in-allowlist", req);
       return res.status(403).json({
         error: `CSRF: Origin ${originPart} is not in ALLOWED_ORIGINS`,
       });
@@ -85,6 +126,7 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
   // Fallback: require the Origin host to match the request's own Host header.
   // This is the safe default for single-deployment Manus apps.
   if (!originHostMatchesRequest(origin, req)) {
+    logCsrfRejection("origin-host-mismatch", req);
     return res.status(403).json({
       error: "CSRF: Origin does not match request host",
     });
