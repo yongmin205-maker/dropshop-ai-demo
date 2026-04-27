@@ -262,5 +262,62 @@
 
 ### Phase 5 — Sweep + checkpoint + deliver
 - [x] Full vitest sweep zero-regression: 29 files / 207 tests passing
-- [ ] Final checkpoint
-- [ ] Deliver to user with updated demo URL/checkpoint
+- [x] Final checkpoint (version 28a249aa, includes Phases 1-4)
+- [x] Deliver to user with updated demo URL/checkpoint
+
+
+## Provider-agnostic inbound messaging (Quo adapter, shadow mode)
+
+Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral design so swapping Quo → Twilio/Bandwidth later is just adding one adapter file (no pipeline/agent changes). Shadow mode = AI generates drafts but **never** sends to the real customer; the friend (operator) sees them in a shadow inbox and chooses what to do.
+
+### Phase 1 — Design + scaffold messaging layer
+- [ ] `shared/messaging/InboundMessage.ts`: provider-agnostic normalized type (`provider`, `providerMessageId`, `from`, `to`, `body`, `mediaUrls[]`, `receivedAt`, `conversationId?`, `contactId?`, `raw`)
+- [ ] `server/messaging/types.ts`: `MessagingInboundAdapter` interface (`verifySignature(headers, rawBody, signingKey, nowMs)` → `{ ok: boolean; reason?: string }`; `parsePayload(rawBody)` → `InboundMessage | null`)
+- [ ] `server/messaging/quoAdapter.ts`: implements the interface — HMAC-SHA256 verify against `openphone-signature` header (scheme;version;timestamp;sig); parses `message.received` payload into `InboundMessage`
+- [ ] `server/messaging/inboundPipeline.ts`: provider-agnostic — takes `InboundMessage` + `mode: "shadow" | "live"`, runs through `dropshopAgent`, persists draft + (in live mode only) sends via outbound adapter. Always rejects in shadow mode if anyone tries to call send.
+
+### Phase 2 — HTTP wiring + shadow inbox
+- [ ] `POST /api/messaging/inbound/quo` Express handler — captures raw body BEFORE json-parse, runs `quoAdapter.verifySignature` + `parsePayload`, hands off to inboundPipeline in shadow mode
+- [ ] Persist shadow drafts in a new `shadow_messages` table (drizzle schema): inbound message + AI draft + intent + status (`new` / `reviewed` / `discarded`) + receivedAt
+- [ ] tRPC `shadow.list` / `shadow.markReviewed` / `shadow.discard` for an internal viewer (admin-only)
+- [ ] Env var `QUO_WEBHOOK_SIGNING_KEY` documented in README — actual value added via `webdev_request_secrets` only after friend OK
+
+### Phase 3 — Vitest contracts
+- [ ] HMAC verify: known-good signature passes (use docs example signingKey + timestamp + body)
+- [ ] HMAC verify: tampered body fails
+- [ ] HMAC verify: tampered timestamp fails
+- [ ] Replay protection: timestamp older than 5 min rejected
+- [ ] Payload normalize: `message.received` → `InboundMessage` shape correct (from/to/body/mediaUrls/conversationId)
+- [ ] inboundPipeline shadow mode: dropshopAgent draft generated AND outbound adapter NEVER invoked (mock outbound fails the test if called)
+- [ ] inboundPipeline live mode is gated behind explicit feature flag (`MESSAGING_LIVE_MODE=1`, default off)
+
+### Phase 4 — Friend-facing migration message (Korean)
+- [ ] Short version (3-4 lines, casual KakaoTalk tone): "OpenPhone(=Quo) 옮겨도 되는지 가볍게 물어보기"
+- [ ] Long version (1 page, "근데 왜 이거 필요해?" 같은 친구 반박 미리 답변): Sona 있어도 우리 다른 이유, vendor lockin 아닌 이유 (adapter pattern), shadow mode 안전장치, 가게 비용 변화, 번호 portability
+- [ ] 두 버전 모두 `mainstreet-ai/pilots/pilot1_dropshop/proposals/openphone_migration_friend_message.md` 에 저장
+
+### Phase 5 — Sweep + checkpoint + deliver
+- [ ] Full vitest sweep zero-regression (target: 207 + ~7 new = ~214 passing)
+- [ ] Checkpoint
+- [ ] Deliver friend-message file path + checkpoint version to user
+
+
+## DropShop friend-facing PDF briefing (in progress)
+
+- [ ] Capture DropShop landing/hero screenshot from live site (https://dropshopai-vx45nyzf.manus.space)
+- [ ] Capture SMS simulator + AI draft generation screenshot (preset: Order Status / Pickup)
+- [ ] Capture Approval Queue screenshot showing AI draft + Approve/Reject buttons + customer profile pill
+- [ ] Capture CleanCloud-aware reply screenshot (AI quoting real order ID/status from mock POS)
+- [ ] Capture Critical Escalation card screenshot (handoff alert panel)
+- [ ] Write briefing markdown: cover + why-OpenPhone + comparison table + UI walkthrough (with screenshots) + migration steps + safety + timeline + decision asks
+- [ ] Render final PDF via manus-md-to-pdf, verify layout
+- [ ] Deliver final PDF + source markdown to user
+
+
+## Phase 12 — Approve bug fix + Friend partner PDF
+
+- [x] Fix "Approve failed · Unable to transform response from server" in DropShop Approval Queue (root cause: stale deploy + nested-anchor render error in old build; fixed Link nesting in Home.tsx + Salon.tsx; dev curl now returns 200 OK with valid superjson; redeploy required to reach the live site)
+- [x] Verify Approve flow + 231 vitest still green (231/231 passing across 31 files); save checkpoint
+- [ ] Capture 5 DropShop UI screenshots for friend PDF
+- [ ] Write partner-tone DropShop-only briefing markdown
+- [ ] Render briefing as PDF and deliver

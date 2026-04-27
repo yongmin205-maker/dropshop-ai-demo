@@ -564,11 +564,12 @@ export default function Salon() {
           </div>
           <div className="flex items-center gap-2">
             {/* Industry switcher */}
-            <Link href="/">
-              <a className="inline-flex items-center gap-1.5 rounded-full border border-[var(--salon-line)] bg-[var(--salon-surface)] px-3 py-1.5 text-xs font-medium text-[var(--salon-ink-soft)] hover:bg-[var(--salon-surface-2)]">
-                <ArrowLeftRight className="size-3.5" />
-                Switch to Laundromat
-              </a>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--salon-line)] bg-[var(--salon-surface)] px-3 py-1.5 text-xs font-medium text-[var(--salon-ink-soft)] hover:bg-[var(--salon-surface-2)]"
+            >
+              <ArrowLeftRight className="size-3.5" />
+              Switch to Laundromat
             </Link>
             <Button
               variant="outline"
