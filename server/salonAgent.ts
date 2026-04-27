@@ -18,6 +18,7 @@ import {
   type SalonIntent,
   classifySalonIntent,
 } from "./salonIntents";
+import { guessSalonService } from "../shared/serviceGuess";
 
 /* ============================================================
  * Salon Agent — intent classification + draft generation
@@ -73,23 +74,9 @@ Rules:
 - For Critical Escalation cases, do not draft any reply (the system will return null).`;
 
 /* ----- Intent → service guess (lightweight regex over message body) ----- */
-
-const SERVICE_KEYWORDS: Record<ServiceCategory, string[]> = {
-  cut: ["cut", "trim", "haircut", "style", "blow"],
-  perm: ["perm", "permanent wave", "magic"],
-  color: ["color", "colour", "dye", "single process", "root touch"],
-  balayage: ["balayage", "highlight", "ombre", "babylight"],
-  manicure: ["manicure", "nails"],
-  pedicure: ["pedicure", "pedi"],
-  hairspa: ["spa", "treatment", "deep condition", "scalp"],
-};
-
+// Backed by `shared/serviceGuess` so the client and server can never drift.
 export function guessServiceCategory(body: string): ServiceCategory | null {
-  const lower = body.toLowerCase();
-  for (const [cat, kws] of Object.entries(SERVICE_KEYWORDS)) {
-    if (kws.some((k) => lower.includes(k))) return cat as ServiceCategory;
-  }
-  return null;
+  return guessSalonService(body) as ServiceCategory | null;
 }
 
 /* ----- Tool context formatter ----- */

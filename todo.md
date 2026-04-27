@@ -330,3 +330,32 @@ Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral d
 - [x] P0-C: created `server/messaging/twoPhaseSend.ts` with `recordTwoPhaseSendSuccess` + `recordTwoPhaseSendFailure` + shared `SEND_ERROR_MAX`; webhook auto-send branch now uses the helpers (4 inline statements → 2 helper calls); approve and simulator paths share the constant (different tx model, intentionally not collapsed)
 - [x] Run full vitest suite — 31 files / 231 tests pass (3.83s)
 - [x] Save checkpoint with the P0 refactor message
+
+
+## Phase 14 — P1+P2 follow-up (coverage + decomposition)
+
+- [ ] Backend: `server/dropshopRouter.test.ts` (5+ cases) — direct integration tests for `dropshopRouter` exports (intent, customer, simulator.sendMessage shape, drafts.list filter, escalations.resolve)
+- [ ] Backend: `server/storage.test.ts` (4 cases) — `storagePut` happy-path + missing creds + storageGet presigned URL + key-prefix safety
+- [ ] Client: extract `useVisiblePollInterval` to `client/src/hooks/useVisiblePollInterval.ts`; reuse in Salon
+- [ ] Shared: extract `guessServiceFromBody` to `shared/serviceGuess.ts`; client + server import from there
+- [ ] Client: decompose `client/src/pages/Home.tsx` (1732 LOC, 15 components) into `client/src/pages/dropshop/{Approvals,Inbox,PhoneSimulator,RagMemory,EscalationsPanel,DemoScenarios,Header,...}.tsx`
+- [ ] Vitest: add `vitest.config.ts` with `projects` (server=node, client=jsdom); install `jsdom`, `@testing-library/react`, `@testing-library/jest-dom`
+- [ ] Client: first 2 React tests — `Approvals.test.tsx` (renders queue, Approve click triggers mutation) + `Header.test.tsx` (no nested anchors)
+- [ ] Run full suite, target 250+ tests green
+- [ ] Save final checkpoint
+
+
+## Phase 14 — P1+P2 follow-ups from CODE_AUDIT.md (complete)
+
+- [x] server/storage.test.ts — 7 cases (storage.ts coverage 0% → ~80%)
+- [x] server/dropshopRouter.test.ts — 9 cases via appRouter.createCaller (covers config.get, drafts.listPending, escalations.list, customers.profile, conversations.list/.messages)
+- [x] Extract `useVisiblePollInterval` → `client/src/hooks/useVisiblePollInterval.ts`; Salon also opts in (background tab now pauses calendar polling)
+- [x] Extract `guessSalonService` + keyword table → `shared/serviceGuess.ts`; salonAgent (server) and Salon.tsx (client) both import — no more drift
+- [x] Decompose Home.tsx 1,732 → 1,338 LOC: ApprovalQueue + helpers (CustomerProfileBadge, SmsLengthHint, CustomerProfileData) → `client/src/pages/dropshop/ApprovalQueue.tsx`; intentTone → `client/src/pages/dropshop/intentTone.ts`
+- [x] Wire vitest workspace (`vitest.workspace.ts`): server=node, client=jsdom; add jsdom + @testing-library/react/jest-dom/user-event devDeps; client setup file with auto-cleanup + matchMedia/ResizeObserver polyfills
+- [x] First client tests:
+  - `intentTone.test.ts` (4 cases)
+  - `shared/serviceGuess.test.ts` (6 cases)
+  - `ApprovalQueue.test.tsx` (3 cases — render, Approve click → mutation, **nested-anchor regression lock**)
+- [x] Full suite: 36 files / 260 tests pass (was 247) — net +13 tests across the audit follow-up
+- [x] Save final P1+P2 checkpoint

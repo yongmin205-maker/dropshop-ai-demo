@@ -3,6 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { SALON_PRESET_SCENARIOS, type SalonPresetScenario } from "@shared/salonScenarios";
+import { guessSalonService } from "@shared/serviceGuess";
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVisiblePollInterval } from "@/hooks/useVisiblePollInterval";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -127,16 +129,10 @@ function intentTone(intent?: SalonIntent | null) {
  * Node-only deps; the small risk of drift is acceptable for a demo and
  * checked by a smoke test in the test suite.
  */
+// Single source of truth shared with the server agent (see CODE_AUDIT P1).
+// Cast to the local BookingDraft type — they are equivalent unions.
 function guessServiceFromBody(body: string): BookingDraft["serviceCategory"] | null {
-  const lower = body.toLowerCase();
-  if (/(balayage|highlight|ombre|babylight)/.test(lower)) return "balayage";
-  if (/(perm|magic\s*wave)/.test(lower)) return "perm";
-  if (/(color|colour|dye|single process|root touch)/.test(lower)) return "color";
-  if (/(cut|trim|haircut|style|blow)/.test(lower)) return "cut";
-  if (/(manicure|nails)/.test(lower)) return "manicure";
-  if (/(pedicure|pedi)/.test(lower)) return "pedicure";
-  if (/(spa|treatment|deep condition|scalp)/.test(lower)) return "hairspa";
-  return null;
+  return guessSalonService(body) as BookingDraft["serviceCategory"] | null;
 }
 
 function bubbleClasses(role: "customer" | "salon") {
@@ -341,7 +337,9 @@ export default function Salon() {
       minute: 15 * 60 + 13,
       leadMinutes: 5,
     },
-    { refetchInterval: 15_000 },
+    // Visibility-aware so the dashboard stops polling when the manager
+    // switches tabs (shared hook, also used across the DropShop dashboard).
+    { refetchInterval: useVisiblePollInterval(15_000) },
   );
   const approveBookingMutation = trpc.salon.approveBooking.useMutation({
     onSuccess: () => {
