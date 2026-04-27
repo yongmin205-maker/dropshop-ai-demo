@@ -322,3 +322,219 @@ export async function draftSalonReply(
 
 // Re-export for downstream convenience
 export { SALON_INTENT_LABELS, DAY_NAMES, type SalonIntent };
+
+
+/* ============================================================
+ * Phase 3 — Gap Filler outreach drafting
+ * ------------------------------------------------------------
+ * Given a freed appointment slot and a ranked list of candidate
+ * customers, generate one short SMS draft per candidate. Each
+ * draft is keyed to that candidate's history (VIP framing for
+ * tier=vip, "we noticed you usually book..." for service-fit).
+ *
+ * The pipeline is deterministic when invokeLLM is mocked, and
+ * each draft is wrapped with the metadata the UI needs to commit
+ * the booking via the existing `salon.approveBooking` mutation
+ * (customerId + stylistId + serviceCategory + dayIndex + start).
+ * ============================================================ */
+
+import {
+  findGapFillerCandidates,
+  findProcessingWindowsEndingSoon,
+  getService as getServiceFn,
+  formatMinute,
+  formatPriceRange as formatPriceRangeFn,
+  markAppointmentNoShow,
+  type GapFillerCandidate,
+  type ProcessingReminder,
+  type SalonAppointment,
+  type SalonCustomer,
+} from "./mockSalon";
+
+export interface GapFillerDraft {
+  candidate: GapFillerCandidate;
+  reply: string;
+  /** Booking we will commit if the operator approves this draft. */
+  bookingDraft: {
+    customerId: string;
+    stylistId: SalonAppointment["stylistId"];
+    serviceCategory: SalonAppointment["serviceCategory"];
+    dayIndex: number;
+    startMinute: number;
+  };
+}
+
+export interface GapFillerResult {
+  freedAppointment: SalonAppointment;
+  drafts: GapFillerDraft[];
+  steps: SalonAgentStep[];
+}
+
+const GAP_FILLER_VOICE = `${BRAND_VOICE}
+You are now writing a one-time, time-sensitive outreach SMS to a single customer.
+- Open with their first name.
+- State the freed slot clearly (day + time).
+- Mention a soft incentive (e.g. "this week only — 30% off") only when the customer is VIP or has a no-show penalty (to win them back).
+- Keep it under 240 characters.
+- Do not mention the no-show customer by name.`;
+
+async function generateGapFillerReply(opts: {
+  candidate: GapFillerCandidate;
+  freedAppointment: SalonAppointment;
+  serviceLabel: string;
+  priceLabel: string;
+  whenLabel: string;
+}): Promise<string> {
+  const incentive =
+    opts.candidate.vipTier === "vip"
+      ? "(VIP-only: 30% off this slot if you can take it)"
+      : "(20% off if you can grab it today)";
+  const res = await invokeLLM({
+    messages: [
+      { role: "system", content: GAP_FILLER_VOICE },
+      {
+        role: "user",
+        content:
+          `Customer: ${opts.candidate.customerName} (${opts.candidate.vipTier})\n` +
+          `Reasoning surfaced by ranking: ${opts.candidate.reasoning}\n` +
+          `Freed slot: ${opts.whenLabel} for ${opts.serviceLabel} (${opts.priceLabel}).\n` +
+          `Incentive framing to use: ${incentive}\n\n` +
+          `Compose the outreach SMS.`,
+      },
+    ],
+  });
+  const out = res.choices?.[0]?.message?.content;
+  return typeof out === "string"
+    ? out.trim()
+    : `Hi ${opts.candidate.customerName.split(" ")[0]}, a ${opts.serviceLabel} slot just opened ${opts.whenLabel}. ${incentive}\n— the salon`;
+}
+
+/**
+ * Run the full Gap Filler pipeline: mark the appointment as no-show,
+ * rank top-N candidates, and draft one outreach SMS per candidate.
+ */
+export async function runGapFillerPipeline(opts: {
+  appointmentId: string;
+  topN?: number;
+}): Promise<GapFillerResult> {
+  const steps: SalonAgentStep[] = [];
+
+  const freed = await markAppointmentNoShow(opts.appointmentId);
+  if (!freed) {
+    throw new Error(`Appointment ${opts.appointmentId} not found`);
+  }
+  steps.push({
+    step: "mock_api_called",
+    label: `markAppointmentNoShow(${opts.appointmentId}) → freed ${freed.serviceCategory} on day ${freed.dayIndex} @ ${formatMinute(freed.startMinute)}`,
+    detail: { freed },
+  });
+
+  const candidates = await findGapFillerCandidates(freed, opts.topN ?? 3);
+  steps.push({
+    step: "mock_api_called",
+    label: `findGapFillerCandidates(top ${opts.topN ?? 3}) → ${candidates.length} candidate(s)`,
+    detail: candidates,
+  });
+
+  const svc = await getServiceFn(freed.serviceCategory);
+  const serviceLabel = svc?.name ?? freed.serviceCategory;
+  const priceLabel = svc ? formatPriceRangeFn(svc) : "see catalog";
+  const dayName = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
+    freed.dayIndex
+  ];
+  const whenLabel = `${dayName} at ${formatMinute(freed.startMinute)}`;
+
+  const drafts: GapFillerDraft[] = [];
+  for (const candidate of candidates) {
+    const reply = await generateGapFillerReply({
+      candidate,
+      freedAppointment: freed,
+      serviceLabel,
+      priceLabel,
+      whenLabel,
+    });
+    drafts.push({
+      candidate,
+      reply,
+      bookingDraft: {
+        customerId: candidate.customerId,
+        stylistId: freed.stylistId,
+        serviceCategory: freed.serviceCategory,
+        dayIndex: freed.dayIndex,
+        startMinute: freed.startMinute,
+      },
+    });
+    steps.push({
+      step: "response_drafted",
+      label: `Drafted Gap Filler outreach to ${candidate.customerName} (${candidate.vipTier}, score ${candidate.score})`,
+      detail: { reply },
+    });
+  }
+
+  return { freedAppointment: freed, drafts, steps };
+}
+
+/* ============================================================
+ * Phase 4 — Processing-window stylist reminder drafting
+ * ------------------------------------------------------------
+ * For each appointment whose processing window ends within the
+ * lead time, build a short rinse-alert message addressed to the
+ * stylist. These do NOT go to the customer — they are surfaced
+ * to the operator panel as an internal nudge.
+ *
+ * Because these alerts are high-frequency and template-able, we
+ * intentionally build them deterministically (no LLM call) to
+ * keep cost and latency near zero.
+ * ============================================================ */
+
+export interface ProcessingReminderDraft {
+  reminder: ProcessingReminder;
+  reply: string;
+}
+
+export async function runProcessingReminderPipeline(opts: {
+  now: { dayIndex: number; minute: number };
+  leadMinutes?: number;
+}): Promise<{
+  reminders: ProcessingReminderDraft[];
+  steps: SalonAgentStep[];
+}> {
+  const steps: SalonAgentStep[] = [];
+  const lead = opts.leadMinutes ?? 5;
+  const reminders = await findProcessingWindowsEndingSoon(opts.now, lead);
+  steps.push({
+    step: "mock_api_called",
+    label: `findProcessingWindowsEndingSoon(now, lead=${lead}) → ${reminders.length} reminder(s)`,
+    detail: reminders,
+  });
+
+  const drafts = reminders.map((r) => {
+    const firstName = r.customerName.split(" ")[0];
+    const stylistFirst = r.stylistName.split(" ")[0];
+    const minutesPart =
+      r.minutesUntilRinse <= 0
+        ? "now"
+        : r.minutesUntilRinse === 1
+          ? "in 1 min"
+          : `in ${r.minutesUntilRinse} min`;
+    return {
+      reminder: r,
+      reply: `${stylistFirst}: ${firstName}'s ${r.serviceCategory} rinse ${minutesPart} (${formatMinute(r.rinseMinute)}). Head back to the chair.`,
+    };
+  });
+
+  for (const d of drafts) {
+    steps.push({
+      step: "response_drafted",
+      label: `Reminder drafted for ${d.reminder.stylistName} re ${d.reminder.customerName}`,
+      detail: d,
+    });
+  }
+
+  return { reminders: drafts, steps };
+}
+
+/**
+ * Re-export so tests / router can import without reaching into mockSalon.
+ */
+export type { GapFillerCandidate, ProcessingReminder, SalonCustomer };

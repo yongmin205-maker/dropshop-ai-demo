@@ -62,8 +62,20 @@ interface BookingDraft {
 
 interface CustomerTurn {
   id: string;
-  role: "customer" | "salon";
+  /**
+   * - customer: simulator -> salon (left bubble)
+   * - salon:    AI draft going OUT (right bubble in transcript)
+   * - gap_filler: AI proactive outreach to a 3rd-party customer triggered
+   *               by a no-show. Lives only in the Approval Queue, never
+   *               echoed in the persona's transcript.
+   */
+  role: "customer" | "salon" | "gap_filler";
   body: string;
+  /** Used by gap_filler turns: target customer name + tier for the queue card. */
+  targetCustomerName?: string;
+  targetVipTier?: "none" | "regular" | "vip";
+  /** Used by gap_filler turns to remind the operator which slot was freed. */
+  freedAppointmentLabel?: string;
   intent?: SalonIntent | null;
   escalated?: boolean;
   escalationReason?: string;
@@ -313,6 +325,24 @@ export default function Salon() {
   const utils = trpc.useUtils();
   const calendarQuery = trpc.salon.listAppointments.useQuery();
   const draftMutation = trpc.salon.draft.useMutation();
+  const simulateNoShowMutation = trpc.salon.simulateNoShow.useMutation({
+    onSuccess: () => {
+      utils.salon.listAppointments.invalidate();
+    },
+  });
+  // Phase 4 — processing-window reminders. Pinned to a stable "now" so the
+  // demo is deterministic. We poll on a slow interval so the operator can
+  // observe alerts arriving without manual refresh.
+  const remindersQuery = trpc.salon.checkProcessingReminders.useQuery(
+    {
+      // Wed 15:13 — inside the lead window for Jessica's perm rinse.
+      // Hardcoded so the demo always shows at least one reminder.
+      dayIndex: 2,
+      minute: 15 * 60 + 13,
+      leadMinutes: 5,
+    },
+    { refetchInterval: 15_000 },
+  );
   const approveBookingMutation = trpc.salon.approveBooking.useMutation({
     onSuccess: () => {
       // Refetch the calendar so the just-committed appointment shows up.
@@ -455,14 +485,63 @@ export default function Salon() {
     try {
       await resetDemoMutation.mutateAsync();
       toast("Demo reset — calendar restored to seed week.");
+      // Refetch reminders to drop any state that depended on prior runs.
+      utils.salon.checkProcessingReminders.invalidate();
     } catch {
       // non-fatal; the local turns are cleared regardless
     }
   }
 
+  /**
+   * Phase 3 — Gap Filler trigger.
+   * Pick a customer-currently-confirmed appointment, mark it as no-show,
+   * and push the resulting outreach drafts into the Approval Queue.
+   */
+  async function simulateNoShow(appointmentId: string, label: string) {
+    try {
+      const res = await simulateNoShowMutation.mutateAsync({
+        appointmentId,
+        topN: 3,
+      });
+      const freedLabel = `${res.freedAppointment.dayLabel} ${formatMin(res.freedAppointment.startMinute)} — ${res.freedAppointment.serviceCategory}`;
+      const newTurns: CustomerTurn[] = res.drafts.map((d) => ({
+        id: crypto.randomUUID(),
+        role: "gap_filler",
+        body: d.reply,
+        targetCustomerName: d.candidate.customerName,
+        targetVipTier: d.candidate.vipTier,
+        freedAppointmentLabel: freedLabel,
+        intent: "Booking Request",
+        bookingDraft: {
+          customerId: d.bookingDraft.customerId,
+          stylistId: d.bookingDraft.stylistId,
+          stylistName: "",
+          serviceCategory: d.bookingDraft.serviceCategory,
+          dayIndex: d.bookingDraft.dayIndex,
+          startMinute: d.bookingDraft.startMinute,
+          hostServiceCategory: d.bookingDraft.serviceCategory,
+        },
+        ts: Date.now(),
+      }));
+      setTurns((prev) => [...prev, ...newTurns]);
+      toast.success(
+        `Gap Filler: ${label} freed. ${newTurns.length} VIP outreach drafts pushed to queue.`,
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gap Filler failed",
+      );
+    }
+  }
+
   const pendingApprovals = turns.filter(
-    (t) => t.role === "salon" && !t.approved && !t.rejected && !t.escalated,
+    (t) =>
+      (t.role === "salon" || t.role === "gap_filler") &&
+      !t.approved &&
+      !t.rejected &&
+      !t.escalated,
   );
+  const reminders = remindersQuery.data?.reminders ?? [];
   const escalations = turns.filter((t) => t.role === "salon" && t.escalated);
 
   return (
@@ -521,11 +600,68 @@ export default function Salon() {
             </button>
           ))}
         </div>
+        {/* Proactive simulators — these don't need a customer message;
+            they fire AI flows on the operator's behalf. */}
+        <div className="container pb-4 flex flex-wrap items-center gap-2 border-t border-[var(--salon-line)]/60 pt-3">
+          <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--salon-ink-soft)] mr-1">
+            Proactive AI
+          </span>
+          <button
+            onClick={() =>
+              simulateNoShow(
+                "appt-2",
+                "Sarah's Sat 10am balayage",
+              )
+            }
+            disabled={simulateNoShowMutation.isPending}
+            className="salon-pill salon-pill--terra hover:opacity-80 cursor-pointer disabled:opacity-50"
+            title="Mark Sarah's Sat 10:00 balayage as no-show — AI drafts 3 VIP outreach messages"
+          >
+            {simulateNoShowMutation.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <span className="size-1.5 rounded-full bg-current" />
+            )}
+            Gap Filler: no-show → VIP outreach
+          </button>
+          <span
+            className="salon-pill salon-pill--ink"
+            title="Live: stylist rinse alerts surfaced in left column"
+          >
+            <span className="size-1.5 rounded-full bg-current" />
+            Rinse alerts: {reminders.length} live
+          </span>
+        </div>
       </header>
 
       <main className="container py-6 grid grid-cols-1 lg:grid-cols-[320px_1fr_360px] gap-6">
-        {/* LEFT — Phone simulator */}
-        <section className="salon-panel p-4 flex flex-col gap-3">
+        {/* LEFT — Phone simulator (+ stylist rinse pings on top) */}
+        <section className="flex flex-col gap-4">
+          {reminders.length > 0 && (
+            <div className="salon-panel p-3 border-l-4 border-[var(--salon-terracotta)] bg-[var(--salon-terracotta-soft)]/30">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock3 className="size-4 text-[var(--salon-terracotta)]" />
+                <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--salon-terracotta)] font-semibold">
+                  Stylist pings — rinse imminent
+                </span>
+              </div>
+              <ul className="space-y-1.5">
+                {reminders.map((r, i) => (
+                  <li
+                    key={i}
+                    className="text-xs leading-snug text-[var(--salon-ink)]"
+                  >
+                    <span className="font-medium">{r.reminder.stylistName}:</span>{" "}
+                    {r.reply}
+                  </li>
+                ))}
+              </ul>
+              <div className="text-[10px] text-[var(--salon-ink-soft)] mt-2">
+                Internal alert — not sent to customer.
+              </div>
+            </div>
+          )}
+        <div className="salon-panel p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--salon-ink-soft)]">
@@ -549,11 +685,13 @@ export default function Salon() {
                 Pick a scenario above or type a message below to start.
               </div>
             )}
-            {turns.map((t) => (
-              <div key={t.id} className={bubbleClasses(t.role)}>
-                {t.body}
-              </div>
-            ))}
+            {turns
+              .filter((t) => t.role === "customer" || t.role === "salon")
+              .map((t) => (
+                <div key={t.id} className={bubbleClasses(t.role as "customer" | "salon")}>
+                  {t.body}
+                </div>
+              ))}
             {draftMutation.isPending && (
               <div className={bubbleClasses("salon")}>
                 <Loader2 className="size-3.5 inline animate-spin mr-1" />
@@ -586,6 +724,7 @@ export default function Salon() {
               )}
             </Button>
           </div>
+        </div>
         </section>
 
         {/* CENTER — Calendar + Inbox */}
@@ -691,9 +830,38 @@ export default function Salon() {
                 {pendingApprovals.map((t) => (
                   <div
                     key={t.id}
-                    className="rounded-xl border border-[var(--salon-line)] bg-white p-3"
+                    className={`rounded-xl border bg-white p-3 ${
+                      t.role === "gap_filler"
+                        ? "border-[var(--salon-terracotta)]/40 bg-[var(--salon-terracotta-soft)]/40"
+                        : "border-[var(--salon-line)]"
+                    }`}
                   >
-                    {t.intent && (
+                    {t.role === "gap_filler" && (
+                      <div className="flex items-center gap-2 mb-2 text-[11px] text-[var(--salon-terracotta)] uppercase tracking-[0.18em] font-semibold">
+                        <Sparkles className="size-3.5" />
+                        Gap Filler outreach
+                      </div>
+                    )}
+                    {t.role === "gap_filler" && t.targetCustomerName && (
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <div className="text-sm font-medium text-[var(--salon-ink)]">
+                            → {t.targetCustomerName}
+                            {t.targetVipTier && t.targetVipTier !== "none" && (
+                              <span className="ml-2 salon-pill salon-pill--terra text-[10px]">
+                                {t.targetVipTier.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          {t.freedAppointmentLabel && (
+                            <div className="text-[11px] text-[var(--salon-ink-soft)]">
+                              Freed slot: {t.freedAppointmentLabel}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {t.intent && t.role !== "gap_filler" && (
                       <span className={`salon-pill ${intentTone(t.intent)} mb-2`}>
                         {t.intent}
                       </span>

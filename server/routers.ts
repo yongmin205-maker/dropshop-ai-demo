@@ -64,6 +64,10 @@ import {
 import { listErrorAlerts, purgeOldErrorAlerts } from "./alertEngine";
 import {
   draftSalonReply,
+  runGapFillerPipeline,
+  runProcessingReminderPipeline,
+  type GapFillerDraft,
+  type ProcessingReminderDraft,
   type SalonAgentDraftResult,
 } from "./salonAgent";
 import { SALON_INTENT_LABELS, type SalonIntent } from "./salonIntents";
@@ -936,6 +940,88 @@ export const appRouter = router({
       await resetSalonRuntime();
       return { ok: true };
     }),
+
+    /**
+     * Phase 3 — Gap Filler. Marks the chosen appointment as no_show,
+     * ranks top-N waiting-list candidates, and returns one outreach
+     * SMS draft per candidate. Each draft carries a `bookingDraft`
+     * the UI can submit through `salon.approveBooking` to commit.
+     */
+    simulateNoShow: publicProcedure
+      .input(
+        z.object({
+          appointmentId: z.string().min(1).max(100),
+          topN: z.number().int().min(1).max(5).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const start = Date.now();
+        try {
+          const result = await runGapFillerPipeline({
+            appointmentId: input.appointmentId,
+            topN: input.topN,
+          });
+          const services = await listSalonServices();
+          const svc = services.find(
+            (s) => s.category === result.freedAppointment.serviceCategory,
+          );
+          return {
+            freedAppointment: {
+              ...result.freedAppointment,
+              dayLabel:
+                SALON_DAY_NAMES[result.freedAppointment.dayIndex] ??
+                `Day ${result.freedAppointment.dayIndex}`,
+              label: formatSlot(
+                result.freedAppointment.dayIndex,
+                result.freedAppointment.startMinute,
+                svc?.totalMinutes ?? 0,
+              ),
+            },
+            drafts: result.drafts satisfies GapFillerDraft[],
+            steps: result.steps,
+            latencyMs: Date.now() - start,
+          };
+        } catch (err) {
+          await logServerError({
+            level: "error",
+            source: "salon.simulateNoShow",
+            err,
+            context: { appointmentId: input.appointmentId },
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message:
+              err instanceof Error
+                ? err.message
+                : "Gap Filler pipeline failed.",
+          });
+        }
+      }),
+
+    /**
+     * Phase 4 — Processing-window reminders. Returns the set of
+     * stylist-facing rinse alerts whose processing windows end within
+     * `leadMinutes` of the supplied `now` cursor. Pure read — it
+     * does NOT mutate appointment state.
+     */
+    checkProcessingReminders: publicProcedure
+      .input(
+        z.object({
+          dayIndex: z.number().int().min(0).max(6),
+          minute: z.number().int().min(0).max(24 * 60 - 1),
+          leadMinutes: z.number().int().min(0).max(60).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const result = await runProcessingReminderPipeline({
+          now: { dayIndex: input.dayIndex, minute: input.minute },
+          leadMinutes: input.leadMinutes,
+        });
+        return {
+          reminders: result.reminders satisfies ProcessingReminderDraft[],
+          steps: result.steps,
+        };
+      }),
 
     /** Generate (do not send) an AI draft for a simulated inbound message. */
     draft: publicProcedure

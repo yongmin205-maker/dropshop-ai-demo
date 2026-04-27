@@ -236,8 +236,31 @@
 - [x] Closed-loop: salon `approveBooking` + `resetDemo` mutations — turns AI's first overlap candidate into a real in-memory appointment, and Reset clears it back to seed
 - [x] UI: approve button in salon Approval Queue commits the booking via tRPC, invalidates calendar query, rolls back optimistic approval if the server rejects
 - [x] Vitest: 3 new closed-loop tests (approveBooking commits/visibility, resetDemo idempotency, input range guards) — 199 total passing
-- [ ] Gap Filler scenario: noShow event → AI auto-drafts limited-time outreach to top-3 VIP customers tagged for that service
-- [ ] Demo scenario pill "No-show → Gap Filler" added to /salon header
-- [ ] Processing-window reminder: when a perm/color enters its processing window, AI drafts "5min till rinse" reminder for the stylist
-- [ ] Demo scenario pill "Perm processing → reminder" added to /salon header
-- [ ] vitest: approveDraft creates appointment, gapFiller surfaces correct VIP list, processing reminder triggers in-window only
+- [x] Gap Filler scenario: noShow event → AI auto-drafts limited-time outreach to top-3 VIP customers tagged for that service
+- [x] Demo scenario pill "Gap Filler: no-show → VIP outreach" added to /salon header (Proactive AI row)
+- [x] Processing-window reminder: when a perm/color processing window is about to end, AI drafts "rinse imminent" reminder for the stylist
+- [x] /salon header shows "Rinse alerts: N live" pill (always-on, polls every 15s); reminder cards render in a Stylist Pings panel above the phone simulator
+- [x] vitest: approveDraft creates appointment, gapFiller surfaces correct VIP list, processing reminder triggers in-window only — 8 new tests added (207 total)
+
+
+## Phase 3+4 design notes (Gap Filler + Processing-window Reminder)
+
+### Phase 3 — Gap Filler
+- [x] mockSalon: `markAppointmentNoShow(apptId)` mutates status → "no_show" and surfaces the freed slot
+- [x] mockSalon: `findGapFillerCandidates(freedAppt, n=3)` ranks VIP customers by (vipTier desc, last visit recency, service-fit) and returns top-N candidates
+- [x] salonAgent: `runGapFillerPipeline(freedAppt, n)` returns N SMS drafts (one per candidate) with limited-time framing, each carrying a `bookingDraft` so Approve commits them
+- [x] tRPC: `salon.simulateNoShow({ appointmentId, topN })` mutation runs the no-show + draft pipeline and returns N drafts with bookable metadata
+- [x] /salon UI: "Gap Filler" pill triggers, drafts appear as terracotta-tinted cards in the Approval Queue with target customer name + VIP tier badge + freed slot label; Approve commits via existing approveBooking mutation
+- [x] Vitest: gapFiller candidate ranking + draft pipeline shape (4 tests in salonRouter.test.ts)
+
+### Phase 4 — Processing-window reminder
+- [x] mockSalon: `findProcessingWindowsEndingSoon(now, leadMinutes=5)` returns appointments whose processing window ends within the lead time (semantic shift: rinse end is what stylists care about, not start)
+- [x] salonAgent: `runProcessingReminderPipeline(now, leadMinutes)` builds short stylist-facing rinse-alert drafts (NOT customer SMS) deterministically (no LLM call) for near-zero latency
+- [x] tRPC: `salon.checkProcessingReminders({ dayIndex, minute, leadMinutes })` query that surfaces current reminders; polls every 15s on the salon page
+- [x] /salon UI: Stylist Pings panel surfaces the rinse alerts above the phone simulator, with deterministic demo cursor pinned to Wed 15:13 so a Jessica perm rinse always demos
+- [x] Vitest: window detection edge cases (in-window, before-lead, different-day filter — 3 tests)
+
+### Phase 5 — Sweep + checkpoint + deliver
+- [x] Full vitest sweep zero-regression: 29 files / 207 tests passing
+- [ ] Final checkpoint
+- [ ] Deliver to user with updated demo URL/checkpoint

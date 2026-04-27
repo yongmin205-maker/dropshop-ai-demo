@@ -75,7 +75,7 @@ export interface SalonAppointment {
   dayIndex: number;
   /** Start time in minutes from midnight (e.g. 14:00 = 840) */
   startMinute: number;
-  status: "confirmed" | "tentative" | "completed";
+  status: "confirmed" | "tentative" | "completed" | "no_show";
 }
 
 /** Open hours: 10:00–20:00 daily. */
@@ -496,6 +496,18 @@ export async function insertAppointment(
 }
 
 /**
+ * Snapshot of the original seed status + customer no-show counters at
+ * module load time, so resetSalonRuntime can put the world back exactly
+ * the way it started after Phase 3 mutations (markAppointmentNoShow
+ * flips status and bumps noShowCount).
+ */
+const _seedAppointmentStatusById: Record<string, SalonAppointment["status"]> =
+  Object.fromEntries(SEED_APPOINTMENTS.map((a) => [a.id, a.status]));
+const _seedCustomerNoShowById: Record<string, number> = Object.fromEntries(
+  SEED_CUSTOMERS.map((c) => [c.id, c.noShowCount]),
+);
+
+/**
  * Reset the demo back to the seed week. Useful for the "Reset demo"
  * button in the UI.
  */
@@ -506,8 +518,188 @@ export async function resetSalonRuntime(): Promise<void> {
     if (idx >= 0) SEED_APPOINTMENTS.splice(idx, 1);
   }
   _runtimeAppointments.length = 0;
+  // Restore mutated seed appointment statuses (no_show → confirmed, etc.)
+  for (const appt of SEED_APPOINTMENTS) {
+    const original = _seedAppointmentStatusById[appt.id];
+    if (original !== undefined) appt.status = original;
+  }
+  // Restore customer no-show counters bumped by markAppointmentNoShow.
+  for (const cust of SEED_CUSTOMERS) {
+    const original = _seedCustomerNoShowById[cust.id];
+    if (original !== undefined) cust.noShowCount = original;
+  }
 }
 
 export function _getRuntimeAppointmentCount(): number {
   return _runtimeAppointments.length;
+}
+
+
+/* ============================================================
+ * Phase 3 — Gap Filler (no-show recovery)
+ * ------------------------------------------------------------
+ * When an appointment becomes a no-show, the chair-time it was
+ * occupying is recoverable revenue if we can text the right
+ * waiting-list customer fast enough. The Gap Filler ranks the
+ * roster by:
+ *   1. VIP tier (vip > regular > none)
+ *   2. Service-fit (does the customer typically book this category?)
+ *   3. Stylist preference (do they prefer the freed stylist?)
+ *   4. No-show history (penalize repeat offenders)
+ *
+ * The status enum is widened to include "no_show" so the timeline
+ * can render those slots distinctly (greyed out + struck through).
+ * ============================================================ */
+
+export interface GapFillerCandidate {
+  customerId: string;
+  customerName: string;
+  vipTier: SalonCustomer["vipTier"];
+  /** 0..1 — composite score; higher = more likely to convert. */
+  score: number;
+  /** Plain-English explanation surfaced to the operator. */
+  reasoning: string;
+}
+
+export async function markAppointmentNoShow(
+  apptId: string,
+): Promise<SalonAppointment | null> {
+  const idx = SEED_APPOINTMENTS.findIndex((a) => a.id === apptId);
+  if (idx < 0) return null;
+  // Mutate in place + bump no-show counter on the customer for future
+  // ranking so the demo stays stateful within a session.
+  const appt = SEED_APPOINTMENTS[idx]!;
+  appt.status = "no_show";
+  const cust = SEED_CUSTOMERS.find((c) => c.id === appt.customerId);
+  if (cust) cust.noShowCount += 1;
+  return { ...appt };
+}
+
+/**
+ * Rank waiting-list candidates for a freshly-freed slot. The freed
+ * appointment carries the stylist + service category we want to fill;
+ * we look across the whole customer roster (excluding the no-show
+ * customer themselves) and surface the top-N picks.
+ */
+export async function findGapFillerCandidates(
+  freedAppointment: SalonAppointment,
+  topN = 3,
+): Promise<GapFillerCandidate[]> {
+  const stylist = await getStylist(freedAppointment.stylistId);
+  if (!stylist) return [];
+
+  const ranked: GapFillerCandidate[] = [];
+
+  for (const cust of SEED_CUSTOMERS) {
+    if (cust.id === freedAppointment.customerId) continue;
+
+    // Pull this customer's history to gauge service-fit.
+    const history = await listAppointmentsForCustomer(cust.id);
+    const hasBookedService = history.some(
+      (h) => h.serviceCategory === freedAppointment.serviceCategory,
+    );
+    const hasBookedWithStylist = history.some(
+      (h) => h.stylistId === freedAppointment.stylistId,
+    );
+
+    const vipBoost =
+      cust.vipTier === "vip" ? 0.4 : cust.vipTier === "regular" ? 0.2 : 0;
+    const serviceBoost = hasBookedService ? 0.25 : 0;
+    const stylistBoost =
+      cust.preferredStylist === freedAppointment.stylistId
+        ? 0.2
+        : hasBookedWithStylist
+          ? 0.1
+          : 0;
+    const noShowPenalty = Math.min(0.3, cust.noShowCount * 0.15);
+
+    const score = Math.max(
+      0,
+      Math.min(1, 0.2 + vipBoost + serviceBoost + stylistBoost - noShowPenalty),
+    );
+    if (score <= 0.2) continue; // skip cold leads
+
+    const reasonBits: string[] = [];
+    if (cust.vipTier === "vip") reasonBits.push("VIP");
+    else if (cust.vipTier === "regular") reasonBits.push("regular");
+    if (cust.preferredStylist === freedAppointment.stylistId) {
+      reasonBits.push(`prefers ${stylist.name.split(" ")[0]}`);
+    }
+    if (hasBookedService) {
+      reasonBits.push(`books ${freedAppointment.serviceCategory} regularly`);
+    }
+    if (cust.noShowCount > 0) {
+      reasonBits.push(`${cust.noShowCount} prior no-show`);
+    }
+
+    ranked.push({
+      customerId: cust.id,
+      customerName: cust.name,
+      vipTier: cust.vipTier,
+      score: Math.round(score * 100) / 100,
+      reasoning: reasonBits.join(" · ") || "matches general profile",
+    });
+  }
+
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked.slice(0, topN);
+}
+
+/* ============================================================
+ * Phase 4 — Processing-window reminder
+ * ------------------------------------------------------------
+ * For services with a processing window (perm/color/balayage), we
+ * surface a stylist-facing alert exactly `leadMinutes` minutes
+ * before the rinse window ends — not when it begins (the stylist
+ * already knows that), but right before they need to come back.
+ * The convention matches findOverlapSlots: processing window =
+ *   [start + activePrep .. start + activePrep + processingMinutes)
+ * ============================================================ */
+
+export interface ProcessingReminder {
+  appointmentId: string;
+  customerName: string;
+  stylistName: string;
+  serviceCategory: ServiceCategory;
+  /** Day-of-week index (0=Mon) for the appointment. */
+  dayIndex: number;
+  /** Wall-clock minute when processing ENDS (i.e., rinse time). */
+  rinseMinute: number;
+  /** Minutes from `now` until the rinse. Always between 0..leadMinutes. */
+  minutesUntilRinse: number;
+}
+
+export async function findProcessingWindowsEndingSoon(
+  now: { dayIndex: number; minute: number },
+  leadMinutes = 5,
+): Promise<ProcessingReminder[]> {
+  const out: ProcessingReminder[] = [];
+  for (const appt of SEED_APPOINTMENTS) {
+    if (appt.status !== "confirmed") continue;
+    if (appt.dayIndex !== now.dayIndex) continue;
+    const svc = await getService(appt.serviceCategory);
+    if (!svc || svc.processingMinutes <= 0) continue;
+    const activePrep =
+      Math.max(0, svc.totalMinutes - svc.processingMinutes) / 2;
+    const procStart = appt.startMinute + activePrep;
+    const procEnd = procStart + svc.processingMinutes;
+
+    const minutesUntilRinse = procEnd - now.minute;
+    if (minutesUntilRinse < 0 || minutesUntilRinse > leadMinutes) continue;
+
+    const cust = SEED_CUSTOMERS.find((c) => c.id === appt.customerId);
+    const stylist = SEED_STYLISTS.find((s) => s.id === appt.stylistId);
+    out.push({
+      appointmentId: appt.id,
+      customerName: cust?.name ?? appt.customerId,
+      stylistName: stylist?.name ?? appt.stylistId,
+      serviceCategory: appt.serviceCategory,
+      dayIndex: appt.dayIndex,
+      rinseMinute: procEnd,
+      minutesUntilRinse,
+    });
+  }
+  // Sort by soonest first.
+  out.sort((a, b) => a.minutesUntilRinse - b.minutesUntilRinse);
+  return out;
 }

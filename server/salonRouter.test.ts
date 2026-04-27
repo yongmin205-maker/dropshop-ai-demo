@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
@@ -208,6 +208,183 @@ describe("salon router contracts", () => {
         serviceCategory: "cut",
         dayIndex: 2,
         startMinute: 24 * 60, // out of range
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+
+/* ============================================================
+ * Phase 3 — Gap Filler (no-show recovery) router contracts
+ * ============================================================ */
+
+describe("salon Gap Filler — simulateNoShow", () => {
+  it("marks the appointment as no_show and returns top-N drafts with bookable metadata", async () => {
+    const caller = makeCaller();
+    // Reset first so we always start from clean seed state, regardless of
+    // earlier tests in the file.
+    await caller.salon.resetDemo();
+
+    // Stub all LLM calls (one per draft) with deterministic replies.
+    mockedInvokeLLM.mockResolvedValue(
+      reply("Hi friend, a slot just opened up.\n— the salon"),
+    );
+
+    const out = await caller.salon.simulateNoShow({
+      appointmentId: "appt-1", // Jessica's Wed perm
+      topN: 3,
+    });
+
+    expect(out.freedAppointment.status).toBe("no_show");
+    expect(out.freedAppointment.dayLabel).toBe("Wed");
+    expect(out.freedAppointment.id).toBe("appt-1");
+    expect(out.drafts.length).toBeGreaterThan(0);
+    expect(out.drafts.length).toBeLessThanOrEqual(3);
+
+    for (const d of out.drafts) {
+      expect(typeof d.reply).toBe("string");
+      expect(d.reply.length).toBeGreaterThan(0);
+      expect(d.bookingDraft.dayIndex).toBe(out.freedAppointment.dayIndex);
+      expect(d.bookingDraft.startMinute).toBe(
+        out.freedAppointment.startMinute,
+      );
+      expect(d.bookingDraft.serviceCategory).toBe(
+        out.freedAppointment.serviceCategory,
+      );
+      expect(d.candidate.score).toBeGreaterThan(0);
+      expect(typeof d.candidate.reasoning).toBe("string");
+    }
+
+    // The freed appointment should now show up as no_show in listAppointments
+    const calendar = await caller.salon.listAppointments();
+    const freedRow = calendar.appointments.find((a) => a.id === "appt-1");
+    expect(freedRow?.status).toBe("no_show");
+  });
+
+  it("simulateNoShow throws for an unknown appointmentId", async () => {
+    const caller = makeCaller();
+    await expect(
+      caller.salon.simulateNoShow({ appointmentId: "appt-doesnt-exist" }),
+    ).rejects.toThrow();
+  });
+
+  it("simulateNoShow ranks VIPs above non-VIPs in the candidate list", async () => {
+    const caller = makeCaller();
+    await caller.salon.resetDemo();
+    mockedInvokeLLM.mockResolvedValue(
+      reply("Hi, slot just opened.\n— the salon"),
+    );
+    const out = await caller.salon.simulateNoShow({
+      appointmentId: "appt-1", // freed perm slot
+      topN: 5,
+    });
+    // First candidate should never be a `none` tier when a vip/regular exists.
+    const tiers = out.drafts.map((d) => d.candidate.vipTier);
+    if (tiers.includes("vip") || tiers.includes("regular")) {
+      expect(["vip", "regular"]).toContain(tiers[0]);
+    }
+  });
+
+  it("after Gap Filler, resetDemo restores the freed appointment back to confirmed", async () => {
+    const caller = makeCaller();
+    await caller.salon.resetDemo();
+    mockedInvokeLLM.mockResolvedValue(reply("hi\n— the salon"));
+    await caller.salon.simulateNoShow({ appointmentId: "appt-1", topN: 1 });
+
+    const before = await caller.salon.listAppointments();
+    expect(
+      before.appointments.find((a) => a.id === "appt-1")?.status,
+    ).toBe("no_show");
+
+    await caller.salon.resetDemo();
+    const after = await caller.salon.listAppointments();
+    expect(
+      after.appointments.find((a) => a.id === "appt-1")?.status,
+    ).toBe("confirmed");
+  });
+});
+
+/* ============================================================
+ * Phase 4 — Processing-window reminder router contracts
+ * ============================================================ */
+
+describe("salon Processing-Window Reminders — checkProcessingReminders", () => {
+  // Reminders read live appointment status; reset before each test so prior
+  // Gap Filler tests (which flip appt-1 → no_show) cannot bleed in.
+  beforeEach(async () => {
+    await makeCaller().salon.resetDemo();
+  });
+
+  it("surfaces a rinse reminder when current time is inside the lead window", async () => {
+    const caller = makeCaller();
+    // Jessica's perm is Wed @ 13:00. Perm is 180 minutes total with 90
+    // minutes processing. Active prep on each side = (180-90)/2 = 45 min,
+    // so processing ENDS at 13:00 + 45 + 90 = 15:15 (915). Querying at
+    // 15:13 with leadMinutes=5 → minutesUntilRinse = 2, well inside.
+    const out = await caller.salon.checkProcessingReminders({
+      dayIndex: 2, // Wed
+      minute: 15 * 60 + 13,
+      leadMinutes: 5,
+    });
+    expect(out.reminders.length).toBeGreaterThan(0);
+    const jessicaRinse = out.reminders.find((r) =>
+      r.reminder.customerName.startsWith("Jessica"),
+    );
+    expect(jessicaRinse).toBeDefined();
+    expect(jessicaRinse?.reminder.serviceCategory).toBe("perm");
+    expect(jessicaRinse?.reply.toLowerCase()).toContain("rinse");
+  });
+
+  it("returns no reminders when the lead window has not yet started", async () => {
+    const caller = makeCaller();
+    // 14:00 on Wed — Jessica's processing window is open but rinse is
+    // still 75 min away (procEnd 15:15). With lead=5, nothing surfaces.
+    const out = await caller.salon.checkProcessingReminders({
+      dayIndex: 2,
+      minute: 14 * 60,
+      leadMinutes: 5,
+    });
+    // The only Wed appointment with processing time is Jessica's perm.
+    // 14:00 is well before its rinse, so it must NOT surface.
+    const jessica = out.reminders.find((r) =>
+      r.reminder.customerName.startsWith("Jessica"),
+    );
+    expect(jessica).toBeUndefined();
+  });
+
+  it("returns no reminders for a different day even at the same time", async () => {
+    const caller = makeCaller();
+    const out = await caller.salon.checkProcessingReminders({
+      dayIndex: 0, // Mon
+      minute: 15 * 60 + 13,
+      leadMinutes: 5,
+    });
+    expect(
+      out.reminders.find((r) => r.reminder.customerName.startsWith("Jessica")),
+    ).toBeUndefined();
+  });
+
+  it("rejects out-of-range dayIndex / minute / leadMinutes", async () => {
+    const caller = makeCaller();
+    await expect(
+      caller.salon.checkProcessingReminders({
+        dayIndex: 7,
+        minute: 600,
+        leadMinutes: 5,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      caller.salon.checkProcessingReminders({
+        dayIndex: 0,
+        minute: 24 * 60,
+        leadMinutes: 5,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      caller.salon.checkProcessingReminders({
+        dayIndex: 0,
+        minute: 600,
+        leadMinutes: 61,
       }),
     ).rejects.toThrow();
   });
