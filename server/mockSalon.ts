@@ -462,3 +462,52 @@ export function formatPriceRange(svc: SalonService): string {
   if (svc.priceLowUsd === svc.priceHighUsd) return `$${svc.priceLowUsd}`;
   return `$${svc.priceLowUsd}–$${svc.priceHighUsd}`;
 }
+
+
+/* ----- demo-only mutations (in-memory; resets on server restart) ----- */
+
+let _apptCounter = SEED_APPOINTMENTS.length;
+const _runtimeAppointments: SalonAppointment[] = [];
+
+/**
+ * Append a freshly-confirmed appointment to the current week.
+ * Used by the closed-loop demo: when an operator clicks "Approve & Send"
+ * on an AI-drafted booking, the agent calls this to materialize the
+ * booking on the timeline. Lives in memory; refresh = clean slate.
+ */
+export async function insertAppointment(
+  input: Omit<SalonAppointment, "id"> & { id?: string },
+): Promise<SalonAppointment> {
+  const id = input.id ?? `appt-runtime-${++_apptCounter}`;
+  const appt: SalonAppointment = {
+    id,
+    customerId: input.customerId,
+    stylistId: input.stylistId,
+    serviceCategory: input.serviceCategory,
+    dayIndex: input.dayIndex,
+    startMinute: input.startMinute,
+    status: input.status ?? "confirmed",
+  };
+  // Keep both arrays in sync so the existing query helpers (which read
+  // SEED_APPOINTMENTS) and any future runtime-only readers see it.
+  SEED_APPOINTMENTS.push(appt);
+  _runtimeAppointments.push(appt);
+  return { ...appt };
+}
+
+/**
+ * Reset the demo back to the seed week. Useful for the "Reset demo"
+ * button in the UI.
+ */
+export async function resetSalonRuntime(): Promise<void> {
+  // Drop runtime-added appointments from SEED_APPOINTMENTS.
+  for (const appt of _runtimeAppointments) {
+    const idx = SEED_APPOINTMENTS.indexOf(appt);
+    if (idx >= 0) SEED_APPOINTMENTS.splice(idx, 1);
+  }
+  _runtimeAppointments.length = 0;
+}
+
+export function _getRuntimeAppointmentCount(): number {
+  return _runtimeAppointments.length;
+}

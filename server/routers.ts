@@ -73,10 +73,13 @@ import {
   formatPriceRange,
   formatSlot,
   getSalonCustomerByPhone,
+  insertAppointment as insertSalonAppointment,
   listAppointmentsForWeek,
   listServices as listSalonServices,
   listStylists as listSalonStylists,
+  resetSalonRuntime,
   type ServiceCategory as SalonServiceCategory,
+  type SalonAppointment,
 } from "./mockSalon";
 
 async function ensureAllSeeded() {
@@ -875,6 +878,64 @@ export const appRouter = router({
           label: formatSlot(s.dayIndex, s.startMinute, s.durationMinutes),
         }));
       }),
+
+    /**
+     * Closed-loop: operator approved an AI booking draft, materialize
+     * it as a real appointment on the in-memory calendar.
+     *
+     * The agent has already validated the slot fits inside an existing
+     * processing window (Overlap Auctioneer) or is otherwise free; this
+     * mutation just commits the chosen tuple. We deliberately do NOT
+     * re-validate here — the operator's approval is the authoritative
+     * sign-off in the HITL model.
+     */
+    approveBooking: publicProcedure
+      .input(
+        z.object({
+          customerId: z.string().min(1).max(100),
+          stylistId: z.enum(["hayley", "jisoo", "soomin"]),
+          serviceCategory: z.enum([
+            "cut",
+            "perm",
+            "color",
+            "balayage",
+            "manicure",
+            "pedicure",
+            "hairspa",
+          ]),
+          dayIndex: z.number().int().min(0).max(6),
+          startMinute: z.number().int().min(0).max(24 * 60 - 1),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const appt = await insertSalonAppointment({
+          customerId: input.customerId,
+          stylistId: input.stylistId,
+          serviceCategory: input.serviceCategory as SalonServiceCategory,
+          dayIndex: input.dayIndex,
+          startMinute: input.startMinute,
+          status: "confirmed",
+        });
+        const services = await listSalonServices();
+        const svc = services.find((s) => s.category === appt.serviceCategory);
+        return {
+          appointment: {
+            ...appt,
+            dayLabel: SALON_DAY_NAMES[appt.dayIndex] ?? `Day ${appt.dayIndex}`,
+            label: formatSlot(
+              appt.dayIndex,
+              appt.startMinute,
+              svc?.totalMinutes ?? 0,
+            ),
+          } satisfies SalonAppointment & { dayLabel: string; label: string },
+        };
+      }),
+
+    /** Reset the salon demo back to the seeded week (drops runtime appointments). */
+    resetDemo: publicProcedure.mutation(async () => {
+      await resetSalonRuntime();
+      return { ok: true };
+    }),
 
     /** Generate (do not send) an AI draft for a simulated inbound message. */
     draft: publicProcedure

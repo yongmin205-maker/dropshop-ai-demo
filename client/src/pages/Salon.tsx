@@ -43,6 +43,23 @@ type SalonIntent =
   | "Pricing"
   | "Critical Escalation";
 
+interface BookingDraft {
+  customerId: string;
+  stylistId: "hayley" | "jisoo" | "soomin";
+  stylistName: string;
+  serviceCategory:
+    | "cut"
+    | "perm"
+    | "color"
+    | "balayage"
+    | "manicure"
+    | "pedicure"
+    | "hairspa";
+  dayIndex: number;
+  startMinute: number;
+  hostServiceCategory: string;
+}
+
 interface CustomerTurn {
   id: string;
   role: "customer" | "salon";
@@ -52,11 +69,19 @@ interface CustomerTurn {
   escalationReason?: string;
   overlapSlots?: Array<{
     stylistName: string;
+    stylistId?: string;
     dayIndex: number;
     startMinute: number;
     durationMinutes: number;
     hostServiceCategory: string;
   }>;
+  /**
+   * Optional: when this is a Booking Request draft and overlap candidates
+   * exist, we attach the *first* candidate as the booking that will be
+   * committed if the operator clicks Approve. This keeps the demo flow
+   * one-tap (no slot picker) while still being a real closed loop.
+   */
+  bookingDraft?: BookingDraft;
   approved?: boolean;
   rejected?: boolean;
   ts: number;
@@ -82,6 +107,24 @@ function intentTone(intent?: SalonIntent | null) {
     default:
       return "salon-pill--ink";
   }
+}
+
+/**
+ * Mirror of server-side `guessServiceCategory` (server/salonAgent.ts).
+ * Kept duplicated rather than imported because the server module pulls in
+ * Node-only deps; the small risk of drift is acceptable for a demo and
+ * checked by a smoke test in the test suite.
+ */
+function guessServiceFromBody(body: string): BookingDraft["serviceCategory"] | null {
+  const lower = body.toLowerCase();
+  if (/(balayage|highlight|ombre|babylight)/.test(lower)) return "balayage";
+  if (/(perm|magic\s*wave)/.test(lower)) return "perm";
+  if (/(color|colour|dye|single process|root touch)/.test(lower)) return "color";
+  if (/(cut|trim|haircut|style|blow)/.test(lower)) return "cut";
+  if (/(manicure|nails)/.test(lower)) return "manicure";
+  if (/(pedicure|pedi)/.test(lower)) return "pedicure";
+  if (/(spa|treatment|deep condition|scalp)/.test(lower)) return "hairspa";
+  return null;
 }
 
 function bubbleClasses(role: "customer" | "salon") {
@@ -267,8 +310,20 @@ function CalendarTimeline({ appointments, overlapSlots }: TimelineProps) {
 /* ----- Main page ----- */
 
 export default function Salon() {
+  const utils = trpc.useUtils();
   const calendarQuery = trpc.salon.listAppointments.useQuery();
   const draftMutation = trpc.salon.draft.useMutation();
+  const approveBookingMutation = trpc.salon.approveBooking.useMutation({
+    onSuccess: () => {
+      // Refetch the calendar so the just-committed appointment shows up.
+      utils.salon.listAppointments.invalidate();
+    },
+  });
+  const resetDemoMutation = trpc.salon.resetDemo.useMutation({
+    onSuccess: () => {
+      utils.salon.listAppointments.invalidate();
+    },
+  });
 
   const [persona, setPersona] = useState<SalonPresetScenario>(
     SALON_PRESET_SCENARIOS[0],
@@ -312,6 +367,27 @@ export default function Salon() {
         phone: persona.customerPhone,
         body,
       });
+      // Closed-loop: if Booking Request + overlap exists, capture the
+      // first overlap as the booking the operator will commit on Approve.
+      let bookingDraft: BookingDraft | undefined;
+      const guessed = guessServiceFromBody(body);
+      if (
+        res.intent === "Booking Request" &&
+        guessed &&
+        Array.isArray(res.overlapSlots) &&
+        res.overlapSlots.length > 0
+      ) {
+        const top = res.overlapSlots[0]!;
+        bookingDraft = {
+          customerId: persona.customerId,
+          stylistId: top.stylistId as BookingDraft["stylistId"],
+          stylistName: top.stylistName,
+          serviceCategory: guessed,
+          dayIndex: top.dayIndex,
+          startMinute: top.startMinute,
+          hostServiceCategory: top.hostServiceCategory,
+        };
+      }
       const salonTurn: CustomerTurn = {
         id: crypto.randomUUID(),
         role: "salon",
@@ -320,6 +396,7 @@ export default function Salon() {
         escalated: res.escalated,
         escalationReason: res.escalationReason,
         overlapSlots: res.overlapSlots,
+        bookingDraft,
         ts: Date.now(),
       };
       setTurns((prev) => [...prev, salonTurn]);
@@ -330,11 +407,39 @@ export default function Salon() {
     }
   }
 
-  function approve(turnId: string) {
+  async function approve(turnId: string) {
+    const target = turns.find((t) => t.id === turnId);
+    if (!target) return;
+
+    // Mark approved immediately for snappy feedback.
     setTurns((prev) =>
       prev.map((t) => (t.id === turnId ? { ...t, approved: true } : t)),
     );
-    toast.success("Draft approved (simulator — no SMS sent)");
+
+    if (target.bookingDraft) {
+      try {
+        const res = await approveBookingMutation.mutateAsync({
+          customerId: target.bookingDraft.customerId,
+          stylistId: target.bookingDraft.stylistId,
+          serviceCategory: target.bookingDraft.serviceCategory,
+          dayIndex: target.bookingDraft.dayIndex,
+          startMinute: target.bookingDraft.startMinute,
+        });
+        toast.success(
+          `Booked: ${res.appointment.label} · ${target.bookingDraft.stylistName} · ${target.bookingDraft.serviceCategory}`,
+        );
+      } catch (err) {
+        // Roll back the optimistic approval so the operator can retry.
+        setTurns((prev) =>
+          prev.map((t) => (t.id === turnId ? { ...t, approved: false } : t)),
+        );
+        toast.error(
+          err instanceof Error ? err.message : "Failed to commit booking",
+        );
+      }
+    } else {
+      toast.success("Draft approved (simulator — no calendar change)");
+    }
   }
 
   function reject(turnId: string) {
@@ -344,9 +449,15 @@ export default function Salon() {
     toast("Draft rejected — operator would regenerate or write manually.");
   }
 
-  function reset() {
+  async function reset() {
     setTurns([]);
     setComposer("");
+    try {
+      await resetDemoMutation.mutateAsync();
+      toast("Demo reset — calendar restored to seed week.");
+    } catch {
+      // non-fatal; the local turns are cleared regardless
+    }
   }
 
   const pendingApprovals = turns.filter(

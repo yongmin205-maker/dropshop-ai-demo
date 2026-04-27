@@ -227,3 +227,17 @@
 - [x] Modern Botanical theme: scoped .salon-theme CSS vars (sage #7a8e6f + terracotta #c2825f + linen #f8f6f0), Fraunces display + DM Sans body, scoped to /salon only
 - [x] Industry switcher pills in both headers (Home → Salon, Salon → Laundromat)
 - [x] Vitest coverage: mockSalon (20 tests), salonAgent (16 tests), salonRouter (8 tests) — 44 new tests, 196 total passing
+
+
+## Pilot 2 follow-up — closed-loop demo + Notion sync (post-deploy)
+- [x] Sync Pilot 1 (Laundromat) Notion page with live URL https://dropshopai-vx45nyzf.manus.space
+- [x] Sync Pilot 2 (Salon) Notion page with live URL https://dropshopai-vx45nyzf.manus.space/salon
+- [x] Update mainstreet-ai/README.md (master index): Pilot 1/2 deployment status, live URLs, demo paths
+- [x] Closed-loop: salon `approveBooking` + `resetDemo` mutations — turns AI's first overlap candidate into a real in-memory appointment, and Reset clears it back to seed
+- [x] UI: approve button in salon Approval Queue commits the booking via tRPC, invalidates calendar query, rolls back optimistic approval if the server rejects
+- [x] Vitest: 3 new closed-loop tests (approveBooking commits/visibility, resetDemo idempotency, input range guards) — 199 total passing
+- [ ] Gap Filler scenario: noShow event → AI auto-drafts limited-time outreach to top-3 VIP customers tagged for that service
+- [ ] Demo scenario pill "No-show → Gap Filler" added to /salon header
+- [ ] Processing-window reminder: when a perm/color enters its processing window, AI drafts "5min till rinse" reminder for the stylist
+- [ ] Demo scenario pill "Perm processing → reminder" added to /salon header
+- [ ] vitest: approveDraft creates appointment, gapFiller surfaces correct VIP list, processing reminder triggers in-window only

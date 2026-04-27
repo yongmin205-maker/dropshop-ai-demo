@@ -130,4 +130,85 @@ describe("salon router contracts", () => {
       }),
     ).rejects.toThrow();
   });
+
+  /* ---------- closed-loop approveBooking ---------- */
+
+  it("approveBooking commits a new appointment that shows up in listAppointments", async () => {
+    const caller = makeCaller();
+    // Snapshot the count before, so we can verify exactly +1 after.
+    const before = await caller.salon.listAppointments();
+    const beforeCount = before.appointments.length;
+
+    const res = await caller.salon.approveBooking({
+      customerId: "c-emily",
+      stylistId: "hayley",
+      serviceCategory: "cut",
+      dayIndex: 2, // Wed (during Jessica's perm processing window)
+      startMinute: 14 * 60 + 30, // 14:30
+    });
+    expect(res.appointment.status).toBe("confirmed");
+    expect(res.appointment.dayLabel).toBe("Wed");
+    expect(res.appointment.stylistId).toBe("hayley");
+    expect(res.appointment.serviceCategory).toBe("cut");
+    expect(typeof res.appointment.label).toBe("string");
+    expect(res.appointment.id).toMatch(/appt-runtime-/);
+
+    const after = await caller.salon.listAppointments();
+    expect(after.appointments.length).toBe(beforeCount + 1);
+    const found = after.appointments.find((a) => a.id === res.appointment.id);
+    expect(found).toBeDefined();
+    expect(found?.customerId).toBe("c-emily");
+  });
+
+  it("resetDemo drops runtime appointments back to the seed week", async () => {
+    const caller = makeCaller();
+    // Make this test order-independent: clear any runtime state from
+    // earlier tests *before* snapshotting the baseline.
+    await caller.salon.resetDemo();
+    const baseline = await caller.salon.listAppointments();
+    // Add two runtime bookings, then reset.
+    await caller.salon.approveBooking({
+      customerId: "c-cindy",
+      stylistId: "soomin",
+      serviceCategory: "cut",
+      dayIndex: 3,
+      startMinute: 11 * 60,
+    });
+    await caller.salon.approveBooking({
+      customerId: "c-jihoon",
+      stylistId: "soomin",
+      serviceCategory: "manicure",
+      dayIndex: 4,
+      startMinute: 16 * 60,
+    });
+    const grown = await caller.salon.listAppointments();
+    expect(grown.appointments.length).toBe(baseline.appointments.length + 2);
+
+    const reset = await caller.salon.resetDemo();
+    expect(reset.ok).toBe(true);
+    const after = await caller.salon.listAppointments();
+    expect(after.appointments.length).toBe(baseline.appointments.length);
+  });
+
+  it("approveBooking rejects out-of-range dayIndex / startMinute", async () => {
+    const caller = makeCaller();
+    await expect(
+      caller.salon.approveBooking({
+        customerId: "c-emily",
+        stylistId: "hayley",
+        serviceCategory: "cut",
+        dayIndex: 9, // out of range
+        startMinute: 14 * 60,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      caller.salon.approveBooking({
+        customerId: "c-emily",
+        stylistId: "hayley",
+        serviceCategory: "cut",
+        dayIndex: 2,
+        startMinute: 24 * 60, // out of range
+      }),
+    ).rejects.toThrow();
+  });
 });
