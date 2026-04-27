@@ -28,6 +28,13 @@ vi.mock("./_core/notification", () => ({
 
 vi.mock("./db", () => ({
   getDb: vi.fn(),
+  readAffectedRows: (result: unknown): number => {
+    if (Array.isArray(result)) {
+      const first = result[0] as { affectedRows?: number } | undefined;
+      return first?.affectedRows ?? 0;
+    }
+    return (result as { affectedRows?: number } | null)?.affectedRows ?? 0;
+  },
 }));
 
 afterEach(() => {

@@ -42,6 +42,7 @@ import {
   transitionDraftStatusTx,
   updateConversationIntent,
   updateConversationIntentTx,
+  updateDraftStatus,
   updateDraftStatusTx,
   updateMessageDelivery,
   updateMessageDeliveryTx,
@@ -49,6 +50,7 @@ import {
   withTransaction,
 } from "./db";
 import type { InsertProcessingLog } from "../drizzle/schema";
+import { SEND_ERROR_MAX } from "./messaging/twoPhaseSend";
 import { embedText, isEmbeddingFallbackActive } from "./embeddings";
 import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
@@ -252,11 +254,11 @@ export const appRouter = router({
             // Roll the draft back to pending so the manager sees the failure.
             await updateMessageDelivery(outbound.id, {
               status: "failed",
-              sendError: result.error.slice(0, 256),
+              sendError: result.error.slice(0, SEND_ERROR_MAX),
             });
-            // Re-open the draft for retry.
+            // Re-open the draft for retry. Best-effort: a follow-up failure here
+            // must not mask the original Twilio error we are about to throw.
             try {
-              const { updateDraftStatus } = await import("./db");
               await updateDraftStatus(draft.id, "pending_approval");
             } catch {
               /* ignore */
@@ -692,7 +694,7 @@ export const appRouter = router({
                 } else {
                   await updateMessageDeliveryTx(tx, auto.outbound.id, {
                     status: "failed",
-                    sendError: sendResult.error.slice(0, 256),
+                    sendError: sendResult.error.slice(0, SEND_ERROR_MAX),
                   });
                   await updateDraftStatusTx(tx, draftId!, "pending_approval");
                 }

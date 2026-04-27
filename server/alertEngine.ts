@@ -4,7 +4,7 @@ import {
   errorLogs,
   type InsertErrorAlert,
 } from "../drizzle/schema";
-import { getDb } from "./db";
+import { getDb, readAffectedRows } from "./db";
 import { notifyOwner } from "./_core/notification";
 
 /**
@@ -258,9 +258,5 @@ export async function purgeOldErrorAlerts(
   const result = await db
     .delete(errorAlerts)
     .where(lt(errorAlerts.createdAt, cutoff));
-  const affected =
-    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
-    (result as unknown as { affectedRows?: number }).affectedRows ??
-    0;
-  return affected;
+  return readAffectedRows(result);
 }

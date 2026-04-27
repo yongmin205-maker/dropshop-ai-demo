@@ -1,6 +1,6 @@
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { errorLogs, type ErrorLog, type InsertErrorLog } from "../drizzle/schema";
-import { getDb } from "./db";
+import { getDb, readAffectedRows } from "./db";
 import { redactPII } from "./pii";
 import { evaluateAlerts } from "./alertEngine";
 
@@ -141,18 +141,12 @@ export async function purgeOldErrorLogs(olderThanDays = 30): Promise<number> {
   const result = await db
     .delete(errorLogs)
     .where(lt(errorLogs.createdAt, cutoff));
-  const affected = (result as unknown as { affectedRows?: number }[])[0]?.affectedRows
-    ?? (result as unknown as { affectedRows?: number }).affectedRows
-    ?? 0;
-  return affected;
+  return readAffectedRows(result);
 }
 
 export async function clearErrorLogs(): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const result = await db.delete(errorLogs);
-  const affected = (result as unknown as { affectedRows?: number }[])[0]?.affectedRows
-    ?? (result as unknown as { affectedRows?: number }).affectedRows
-    ?? 0;
-  return affected;
+  return readAffectedRows(result);
 }

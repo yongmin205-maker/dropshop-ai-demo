@@ -23,6 +23,16 @@ const valuesSpy = vi.fn();
 vi.mock("./db", () => {
   return {
     getDb: vi.fn(),
+    // Mirror the real helper used by errorLog.ts (purge / clear). Reads
+    // mysql2-via-drizzle's OkPacket affectedRows in either array or object
+    // shape.
+    readAffectedRows: (result: unknown): number => {
+      if (Array.isArray(result)) {
+        const first = result[0] as { affectedRows?: number } | undefined;
+        return first?.affectedRows ?? 0;
+      }
+      return (result as { affectedRows?: number } | null)?.affectedRows ?? 0;
+    },
   };
 });
 

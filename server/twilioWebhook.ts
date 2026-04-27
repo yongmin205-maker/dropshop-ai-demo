@@ -32,6 +32,10 @@ import {
 } from "./twilio";
 import type { InsertProcessingLog } from "../drizzle/schema";
 import { logServerError } from "./errorLog";
+import {
+  recordTwoPhaseSendFailure,
+  recordTwoPhaseSendSuccess,
+} from "./messaging/twoPhaseSend";
 
 /**
  * Inbound Twilio webhook. Hardened for production:
@@ -240,35 +244,32 @@ export function registerTwilioWebhook(app: Express) {
               correlationId,
             });
           } else {
-            // Phase 2: hand to Twilio (OUT of the transaction).
+            // Phase 2: hand to Twilio (OUT of the transaction). Then commit
+            // the success or failure branch atomically via the shared helpers
+            // in `messaging/twoPhaseSend.ts` (same contract as the manual
+            // approve path; centralized so a future change to how we record
+            // a Twilio failure is a one-line edit, not three).
             const sendResult = await sendSms(from, result.reply);
             await withTransaction(async (tx) => {
+              const ctx = {
+                conversationId: conversation.id,
+                inboundMessageId: inbound.id,
+                outboundMessageId: auto.outbound.id,
+                draftId,
+                correlationId,
+              };
               if (sendResult.ok) {
-                await updateMessageDeliveryTx(tx, auto.outbound.id, {
-                  status: "sent",
+                await recordTwoPhaseSendSuccess(tx, {
+                  ...ctx,
                   twilioSid: sendResult.sid,
-                });
-                await appendProcessingLogTx(tx, {
-                  conversationId: conversation.id,
-                  messageId: inbound.id,
-                  step: "sent",
-                  label: `Auto-sent via Twilio (auto-send mode)`,
-                  detail: { outboundId: auto.outbound.id, twilioSid: sendResult.sid },
-                  correlationId,
+                  logLabel: "Auto-sent via Twilio (auto-send mode)",
                 });
               } else {
-                await updateMessageDeliveryTx(tx, auto.outbound.id, {
-                  status: "failed",
-                  sendError: sendResult.error.slice(0, 256),
-                });
-                await updateDraftStatusTx(tx, draftId, "pending_approval");
-                await appendProcessingLogTx(tx, {
-                  conversationId: conversation.id,
-                  messageId: inbound.id,
-                  step: "send_failed",
-                  label: "Twilio rejected auto-sent draft — re-opened for manager review",
-                  detail: { error: sendResult.error, outboundId: auto.outbound.id },
-                  correlationId,
+                await recordTwoPhaseSendFailure(tx, {
+                  ...ctx,
+                  error: sendResult.error,
+                  logLabel:
+                    "Twilio rejected auto-sent draft — re-opened for manager review",
                 });
               }
             });

@@ -321,3 +321,12 @@ Lifts the previously-deferred `/api/shadow/inbound` work into a vendor-neutral d
 - [ ] Capture 5 DropShop UI screenshots for friend PDF
 - [ ] Write partner-tone DropShop-only briefing markdown
 - [ ] Render briefing as PDF and deliver
+
+
+## Phase 13 — P0 code-quality fixes from CODE_AUDIT.md
+
+- [x] P0-A: added `readInsertId` / `readAffectedRows` in `server/db.ts`; replaced 8 inlined casts (db.ts ×6, errorLog.ts ×2, alertEngine.ts ×1) and patched 2 vi.mock blocks
+- [x] P0-B: removed dynamic `await import("./db")` in `server/routers.ts` approve catch; static `updateDraftStatus` import added to top of file
+- [x] P0-C: created `server/messaging/twoPhaseSend.ts` with `recordTwoPhaseSendSuccess` + `recordTwoPhaseSendFailure` + shared `SEND_ERROR_MAX`; webhook auto-send branch now uses the helpers (4 inline statements → 2 helper calls); approve and simulator paths share the constant (different tx model, intentionally not collapsed)
+- [x] Run full vitest suite — 31 files / 231 tests pass (3.83s)
+- [x] Save checkpoint with the P0 refactor message

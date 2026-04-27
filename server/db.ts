@@ -54,6 +54,29 @@ export type DbTx = Parameters<
 >[0];
 
 /**
+ * mysql2-via-drizzle returns its `insert`/`update` packet either as `OkPacket`
+ * (single object) or `[OkPacket, FieldPacket[]]` depending on driver version /
+ * call shape. Both forms are observed in production. Centralizing the parse
+ * here means a future driver change is a one-line fix instead of touching
+ * 8 call sites that all reinvent the cast in slightly different ways.
+ */
+export function readInsertId(result: unknown): number | null {
+  if (Array.isArray(result)) {
+    const first = result[0] as { insertId?: number } | undefined;
+    return first?.insertId ?? null;
+  }
+  return (result as { insertId?: number } | null)?.insertId ?? null;
+}
+
+export function readAffectedRows(result: unknown): number {
+  if (Array.isArray(result)) {
+    const first = result[0] as { affectedRows?: number } | undefined;
+    return first?.affectedRows ?? 0;
+  }
+  return (result as { affectedRows?: number } | null)?.affectedRows ?? 0;
+}
+
+/**
  * Cheap correlation id (no `uuid` dep) — base36 millis + 4 random chars.
  * Lives in db.ts so any caller (routers, twilio webhook, scheduled jobs) that
  * persists `processingLogs.correlationId` shares one definition. Pinned by
@@ -185,9 +208,7 @@ export async function appendMessageTx(
   value: InsertMessage,
 ): Promise<typeof messages.$inferSelect> {
   const result = await tx.insert(messages).values(value);
-  const insertId =
-    (result as unknown as { insertId?: number }[])[0]?.insertId ??
-    (result as unknown as { insertId?: number }).insertId;
+  const insertId = readInsertId(result);
   if (!insertId) throw new Error("Failed to insert message (no insertId)");
   const rows = await tx.select().from(messages).where(eq(messages.id, insertId)).limit(1);
   return rows[0]!;
@@ -197,8 +218,7 @@ export async function appendMessage(value: InsertMessage) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(messages).values(value);
-  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
-    ?? (result as unknown as { insertId?: number }).insertId;
+  const insertId = readInsertId(result);
   if (insertId) {
     const rows = await db.select().from(messages).where(eq(messages.id, insertId)).limit(1);
     return rows[0]!;
@@ -262,10 +282,7 @@ export async function createEscalationTx(
   value: InsertEscalation,
 ): Promise<{ id: number }> {
   const result = await tx.insert(escalations).values(value);
-  const insertId =
-    (result as unknown as { insertId?: number }[])[0]?.insertId ??
-    (result as unknown as { insertId?: number }).insertId ??
-    0;
+  const insertId = readInsertId(result) ?? 0;
   // Mirror the escalated flag on the parent conversation.
   await tx.update(conversations).set({ escalated: 1 }).where(eq(conversations.id, value.conversationId));
   return { id: insertId };
@@ -428,8 +445,7 @@ export async function insertDraft(value: InsertDraft): Promise<Draft> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(drafts).values(value);
-  const insertId = (result as unknown as { insertId?: number }[])[0]?.insertId
-    ?? (result as unknown as { insertId?: number }).insertId;
+  const insertId = readInsertId(result);
   if (insertId) {
     const rows = await db.select().from(drafts).where(eq(drafts.id, insertId)).limit(1);
     return rows[0]!;
@@ -445,9 +461,7 @@ export async function insertDraft(value: InsertDraft): Promise<Draft> {
 
 export async function insertDraftTx(tx: DbTx, value: InsertDraft): Promise<Draft> {
   const result = await tx.insert(drafts).values(value);
-  const insertId =
-    (result as unknown as { insertId?: number }[])[0]?.insertId ??
-    (result as unknown as { insertId?: number }).insertId;
+  const insertId = readInsertId(result);
   if (!insertId) throw new Error("Failed to insert draft (no insertId)");
   const rows = await tx.select().from(drafts).where(eq(drafts.id, insertId)).limit(1);
   return rows[0]!;
@@ -462,11 +476,7 @@ export async function transitionDraftStatusTx(
     .update(drafts)
     .set({ status: next })
     .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending_approval")));
-  const affected =
-    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
-    (result as unknown as { affectedRows?: number }).affectedRows ??
-    0;
-  if (!affected) return null;
+  if (!readAffectedRows(result)) return null;
   const fresh = await tx.select().from(drafts).where(eq(drafts.id, draftId)).limit(1);
   return fresh[0] ?? null;
 }
@@ -576,11 +586,7 @@ export async function transitionDraftStatus(
     .update(drafts)
     .set({ status: next })
     .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending_approval")));
-  const affected =
-    (result as unknown as { affectedRows?: number }[])[0]?.affectedRows ??
-    (result as unknown as { affectedRows?: number }).affectedRows ??
-    0;
-  if (!affected) return null;
+  if (!readAffectedRows(result)) return null;
   const fresh = await db.select().from(drafts).where(eq(drafts.id, draftId)).limit(1);
   return fresh[0] ?? null;
 }
