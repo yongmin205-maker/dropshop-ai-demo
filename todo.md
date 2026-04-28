@@ -358,3 +358,11 @@ The `[~]` marker is used here instead of `[ ]` so the file no longer reports fal
 - [x] Fix 3: log first 5 CSRF rejections with full header dump so future live-only mismatches can be diagnosed without redeploy
 - [x] Vitest sweep: 36 files / 260 tests pass (existing originGuard integration suite already covers the proxy-host scenario)
 - [x] Save checkpoint and hand off to user for Publish
+
+
+## Phase 16 — Phase 15 fix did NOT resolve live 403 (still reproducing on `Ca1NUqB5` bundle, even after publish)
+
+- [x] Stop relying on Host comparison entirely. Rewrite `originGuard.requireSameOrigin` so the fallback rule (when `ALLOWED_ORIGINS` env is unset) accepts any Origin whose hostname ends with `.manus.space` or `.manus.computer` — these are the only domains a real Manus user can hit this app from
+- [x] Cross-site Origin (`https://evil.example.com`) still 403; missing Origin still 403; look-alike `manus.space.evil.com` still 403 (4 new contracts)
+- [x] originGuard.test.ts now has 11 cases (was 7), originGuardIntegration.test.ts unchanged 7 — both green
+- [x] Full vitest 36 files / 264 tests passing

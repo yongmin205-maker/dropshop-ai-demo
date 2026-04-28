@@ -9,21 +9,39 @@
  *
  * Strategy:
  *  - Allow any GET / HEAD / OPTIONS (no state change).
- *  - For POST/PUT/PATCH/DELETE: require `Origin` (or fall back to `Referer`)
- *    that matches one of the allowed origins.
- *  - Allowed origins come from `ALLOWED_ORIGINS` (comma-separated). If the env
- *    is missing we fall back to a permissive same-host rule using the request's
- *    own `Host` header — the typical Manus deployment pattern.
+ *  - For POST/PUT/PATCH/DELETE: require `Origin` (or fall back to `Referer`).
+ *  - If `ALLOWED_ORIGINS` env is set, the Origin must be in the explicit
+ *    allow-list (comma-separated, exact match).
+ *  - Otherwise, fall back to a host-suffix policy: any Origin whose hostname
+ *    ends with `.manus.space` or `.manus.computer` is accepted. These two
+ *    suffixes cover (a) the production deployment (`*.manus.space`) and (b)
+ *    the sandbox dev preview (`*.manus.computer`). Comparing against the
+ *    request's own `Host` header is unreliable behind the Manus reverse proxy
+ *    — the proxy rewrites `Host` to the internal Cloud-Run host while leaving
+ *    the browser's `Origin` set to the public domain, so a strict comparison
+ *    rejects every legitimate request.
+ *
+ * Security tradeoff: the suffix policy means any other `*.manus.space` app the
+ * operator opens could in principle issue a cross-origin POST to this app.
+ * That is acceptable here because (i) all such apps are first-party Manus
+ * deployments operating under the same OAuth realm, (ii) the protected
+ * procedures additionally require a valid `app_session_id` cookie scoped to
+ * THIS app's domain, and (iii) operators in practice only run one or two
+ * Manus apps. If you need stricter isolation, set `ALLOWED_ORIGINS` to the
+ * exact public origin(s) you trust.
  */
 
 import type { NextFunction, Request, Response } from "express";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// Manus-managed host suffixes that are always trusted in fallback mode.
+const MANUS_HOST_SUFFIXES = [".manus.space", ".manus.computer"];
+
 // Log only the first few CSRF rejections so we can diagnose live-environment
 // header mismatches without spamming the log forever.
 let csrfDebugLogsRemaining = 5;
-function logCsrfRejection(reason: string, req: Request) {
+function logCsrfRejection(reason: string, req: Request, extra?: Record<string, unknown>) {
   if (csrfDebugLogsRemaining <= 0) return;
   csrfDebugLogsRemaining -= 1;
   // eslint-disable-next-line no-console
@@ -38,8 +56,7 @@ function logCsrfRejection(reason: string, req: Request) {
       host: req.headers["host"] ?? null,
       xForwardedHost: req.headers["x-forwarded-host"] ?? null,
       xForwardedProto: req.headers["x-forwarded-proto"] ?? null,
-      reqHostname: req.hostname,
-      reqProtocol: req.protocol,
+      ...extra,
     }),
   );
 }
@@ -55,35 +72,16 @@ function parseAllowedOrigins(): Set<string> | null {
   );
 }
 
-function originHostMatchesRequest(originUrl: string, req: Request): boolean {
+function originHostname(originValue: string): string | null {
   try {
-    const u = new URL(originUrl);
-    // When `app.set("trust proxy", true)` is on, Express populates req.hostname
-    // from x-forwarded-host and req.protocol from x-forwarded-proto. We try the
-    // proxy-aware values first, then fall back to raw Host header (still
-    // checking x-forwarded-host directly in case trust-proxy is not configured).
-    const candidateHosts = [
-      req.hostname,
-      (req.headers["x-forwarded-host"] as string) || "",
-      (req.headers["host"] as string) || "",
-    ]
-      .map((h) => (h || "").split(",")[0].trim())
-      .filter(Boolean);
-    if (candidateHosts.length === 0) return false;
-    return candidateHosts.some((host) => {
-      try {
-        // strip port to compare host only (browsers usually omit default ports
-        // from Origin, but reverse proxies may add :443 / :8080 to Host)
-        const originHost = u.hostname.toLowerCase();
-        const reqHost = host.split(":")[0].toLowerCase();
-        return originHost === reqHost;
-      } catch {
-        return false;
-      }
-    });
+    return new URL(originValue).hostname.toLowerCase();
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isTrustedManusHost(hostname: string): boolean {
+  return MANUS_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
 export function requireSameOrigin(req: Request, res: Response, next: NextFunction) {
@@ -103,19 +101,26 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
     });
   }
 
+  const hostname = originHostname(origin);
+  if (!hostname) {
+    logCsrfRejection("unparseable-origin", req);
+    return res.status(403).json({
+      error: "CSRF: Origin/Referer header is not a valid URL",
+    });
+  }
+
   const allowList = parseAllowedOrigins();
   if (allowList) {
-    const norm = origin.replace(/\/$/, "");
     // Origin headers are scheme://host[:port]. Referer can be a full URL — we
     // only compare its origin component.
-    let originPart = norm;
+    let originPart = origin.replace(/\/$/, "");
     try {
-      originPart = new URL(norm).origin;
+      originPart = new URL(origin).origin;
     } catch {
-      // not a parseable URL — treat raw value as origin
+      // unreachable: hostname parse already succeeded
     }
     if (!allowList.has(originPart)) {
-      logCsrfRejection("not-in-allowlist", req);
+      logCsrfRejection("not-in-allowlist", req, { originPart });
       return res.status(403).json({
         error: `CSRF: Origin ${originPart} is not in ALLOWED_ORIGINS`,
       });
@@ -123,12 +128,12 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
     return next();
   }
 
-  // Fallback: require the Origin host to match the request's own Host header.
-  // This is the safe default for single-deployment Manus apps.
-  if (!originHostMatchesRequest(origin, req)) {
-    logCsrfRejection("origin-host-mismatch", req);
+  // Fallback: trust any Manus-managed domain. See the file header comment for
+  // the security rationale.
+  if (!isTrustedManusHost(hostname)) {
+    logCsrfRejection("untrusted-host", req, { hostname });
     return res.status(403).json({
-      error: "CSRF: Origin does not match request host",
+      error: "CSRF: Origin is not a trusted Manus domain",
     });
   }
   return next();

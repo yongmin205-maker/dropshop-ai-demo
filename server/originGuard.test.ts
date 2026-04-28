@@ -127,6 +127,70 @@ describe("§5.10 requireSameOrigin", () => {
     expect(next).toHaveBeenCalledOnce();
   });
 
+  it("fallback policy accepts any *.manus.space Origin even when proxy rewrites Host", () => {
+    const next = vi.fn();
+    const res = mkRes() as any;
+    requireSameOrigin(
+      mkReq({
+        method: "POST",
+        origin: "https://dropshopai-vx45nyzf.manus.space",
+        // Manus reverse proxy rewrites Host to internal Cloud-Run host:
+        host: "webapp-deploy-abc123.run.internal:8080",
+      }),
+      res,
+      next,
+    );
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("fallback policy accepts *.manus.computer (sandbox dev preview)", () => {
+    const next = vi.fn();
+    const res = mkRes() as any;
+    requireSameOrigin(
+      mkReq({
+        method: "POST",
+        origin: "https://3000-abc.us2.manus.computer",
+        host: "3000-abc.us2.manus.computer",
+      }),
+      res,
+      next,
+    );
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("fallback policy rejects non-Manus origins even if Host happens to match", () => {
+    const next = vi.fn();
+    const res = mkRes() as any;
+    requireSameOrigin(
+      mkReq({
+        method: "POST",
+        origin: "https://evil.example.com",
+        host: "evil.example.com",
+      }),
+      res,
+      next,
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it("fallback policy rejects look-alike suffix (manus.space.evil.com)", () => {
+    const next = vi.fn();
+    const res = mkRes() as any;
+    requireSameOrigin(
+      mkReq({
+        method: "POST",
+        origin: "https://manus.space.evil.com",
+        host: "manus.space.evil.com",
+      }),
+      res,
+      next,
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
   it("ALLOWED_ORIGINS allow-list takes precedence over same-host check", () => {
     process.env.ALLOWED_ORIGINS =
       "https://prod.manus.space,https://staging.manus.space";
