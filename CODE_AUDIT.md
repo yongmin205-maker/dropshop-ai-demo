@@ -173,3 +173,28 @@ comm -23 \
   <(find server -type f -name '*.ts' -not -name '*.test.ts' -not -path '*/_core/*' | sed 's/\.ts$//' | sort) \
   <(find server -type f -name '*.test.ts' | sed 's/\.test\.ts$//' | sort)
 ```
+
+
+---
+
+## 5. Deepening vocabulary (added Phase 17)
+
+The next round of architectural review uses the vocabulary from John Ousterhout's *A Philosophy of Software Design* and the [mattpocock/skills `improve-codebase-architecture`](https://github.com/mattpocock/skills/tree/main/improve-codebase-architecture) skill. Adopting the language is the prerequisite for a productive review — without shared terms every candidate refactor turns into a definitional argument.
+
+### 5.1 Terms we will use
+
+A **Module** is anything with an interface and an implementation, deliberately scale-agnostic — a function, class, package, or tier-spanning slice all qualify. The **Interface** is everything a caller must know to use the Module correctly: the type signature plus invariants, ordering constraints, error modes, and performance characteristics. The **Implementation** is what sits behind the Interface — its body of code. **Depth** is the leverage at the Interface, that is, the amount of behaviour a caller (or test) can exercise per unit of Interface they have to learn; a Module is *deep* when a large amount of behaviour sits behind a small Interface and *shallow* when the Interface is nearly as complex as the Implementation. A **Seam** (Michael Feathers' term) is a place where you can alter behaviour without editing in that place — the location at which a Module's Interface lives. An **Adapter** is a concrete thing that satisfies an Interface at a Seam; it describes the role a thing plays, not what is inside it.
+
+### 5.2 Principles
+
+Depth is a property of the Interface, not the Implementation: a deep Module can be internally composed of small swappable parts, they just are not part of the Interface. The deletion test asks, "if I deleted this Module, where would the complexity reappear?" — if it vanishes, the Module was a pass-through; if it reappears across N callers, the Module was earning its keep. The Interface is the test surface — callers and tests cross the same Seam, and if you want to test past the Interface the Module is probably the wrong shape. One Adapter means a hypothetical Seam; two Adapters means a real one — do not introduce a Seam unless something actually varies across it.
+
+### 5.3 Candidate deepenings in this repo
+
+The current `Home.tsx` (~700 lines after the Phase-15 split) still composes the demo scenario rail, the simulator iframe controls, the inbox preview, and the approval queue card stack inline. Each block has its own state and its own data needs, but they share no Interface — extracting them behind a `<DemoStage scenario="…" />` Module would let the page itself become a layout shell and let each stage be tested via its public props rather than via DOM walking from the page root.
+
+The Two-Phase Send pipeline (`server/twoPhaseSend.ts` plus its callers in `routers.ts`) currently couples the Owner-Approval flow, the queued-row insert, the Twilio call, and the failure-reopen step into one async function. The transport (Twilio) is the only thing that varies between Live Mode and Simulator Mode, but right now the variation is expressed as an `if (env.LIVE_MODE)` branch inside the pipeline. Defining a `MessageTransport` Interface (`send(toE164, body) → { sid } | { error }`) and injecting either a Twilio Adapter or a Simulator Adapter at the Seam would (a) make the pipeline trivially testable without `vi.mock` of the entire `./twilio` module, and (b) give us the place to plug in OpenPhone or Nextiva when the friend's stack lands.
+
+The retrieval layer (Knowledge Chunks + Style Examples + Rejections) similarly has two real Adapters today — embedding-backed and keyword-backed — but they are both implemented inline in the same function. Promoting the choice to a `RagRetriever` Interface with two Adapters would let `aiAgent.ts` consume one Module instead of branching on `embeddingMode` itself, and the Errors-tab fallback counter would have an obvious place to live.
+
+None of these are urgent. They are recorded here so the next architecture session has a starting list rather than a blank page.

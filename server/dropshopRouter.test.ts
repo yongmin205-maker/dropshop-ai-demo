@@ -50,17 +50,24 @@ vi.mock("./knowledgeSeed", () => ({
   seedKnowledgeIfEmpty: vi.fn(async () => undefined),
 }));
 
+import { fromPartial } from "@total-typescript/shoehorn";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
 type AuthUser = NonNullable<TrpcContext["user"]>;
 
 function makePublicCaller() {
-  return appRouter.createCaller({
-    user: null,
-    req: { protocol: "https", headers: {}, ip: "127.0.0.1" },
-    res: { clearCookie: () => {} },
-  } as unknown as TrpcContext);
+  return appRouter.createCaller(
+    fromPartial<TrpcContext>({
+      user: null,
+      req: fromPartial<TrpcContext["req"]>({
+        protocol: "https",
+        headers: {},
+        ip: "127.0.0.1",
+      }),
+      res: fromPartial<TrpcContext["res"]>({ clearCookie: () => {} }),
+    }),
+  );
 }
 
 function makeAdminCaller() {
@@ -75,11 +82,17 @@ function makeAdminCaller() {
     updatedAt: new Date(),
     lastSignedIn: new Date(),
   };
-  return appRouter.createCaller({
-    user,
-    req: { protocol: "https", headers: {}, ip: "127.0.0.1" },
-    res: { clearCookie: () => {} },
-  } as unknown as TrpcContext);
+  return appRouter.createCaller(
+    fromPartial<TrpcContext>({
+      user,
+      req: fromPartial<TrpcContext["req"]>({
+        protocol: "https",
+        headers: {},
+        ip: "127.0.0.1",
+      }),
+      res: fromPartial<TrpcContext["res"]>({ clearCookie: () => {} }),
+    }),
+  );
 }
 
 beforeAll(() => {

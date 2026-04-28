@@ -115,7 +115,7 @@ vi.mock("./db", () => {
         status: "pending_approval",
         revision: d.revision ?? 1,
         ...d,
-      } as Draft;
+      } as Draft; // tight loop: building the row inside the mock; not migration target
       state.drafts.set(row.id, row);
       return row;
     }),
@@ -162,6 +162,7 @@ vi.mock("./db", () => {
 const dbMod = await import("./db");
 const llmMod = await import("./_core/llm");
 const agent = await import("./aiAgent");
+const { fromPartial } = await import("@total-typescript/shoehorn");
 
 beforeEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,27 +178,31 @@ beforeEach(() => {
 describe("drafts.reject — integration: persists category and regenerates with [category] tag", () => {
   it("calls insertRejection with the chosen category and regenerates a new draft", async () => {
     // Stage an initial draft
-    const draft = await dbMod.insertDraft({
-      conversationId: 5,
-      inboundMessageId: 50,
-      intent: "Pickup Request",
-      body: "Good afternoon — your pickup is confirmed.\n— DropShop",
-      revision: 1,
-      status: "pending_approval",
-    } as Parameters<typeof dbMod.insertDraft>[0]);
+    const draft = await dbMod.insertDraft(
+      fromPartial<Parameters<typeof dbMod.insertDraft>[0]>({
+        conversationId: 5,
+        inboundMessageId: 50,
+        intent: "Pickup Request",
+        body: "Good afternoon — your pickup is confirmed.\n— DropShop",
+        revision: 1,
+        status: "pending_approval",
+      }),
+    );
 
     // Simulate the EXACT side-effects of the reject router
     const category = "tone_too_formal";
     const reason = "Customer prefers casual tone";
-    await dbMod.insertRejection({
-      draftId: draft.id,
-      intent: draft.intent,
-      customerBody: "Pickup for Marie please",
-      rejectedReply: draft.body,
-      category,
-      reason,
-      embedding: [],
-    } as Parameters<typeof dbMod.insertRejection>[0]);
+    await dbMod.insertRejection(
+      fromPartial<Parameters<typeof dbMod.insertRejection>[0]>({
+        draftId: draft.id,
+        intent: draft.intent,
+        customerBody: "Pickup for Marie please",
+        rejectedReply: draft.body,
+        category,
+        reason,
+        embedding: [],
+      }),
+    );
 
     // Assert: rejection persists with the category
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

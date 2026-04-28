@@ -366,3 +366,13 @@ The `[~]` marker is used here instead of `[ ]` so the file no longer reports fal
 - [x] Cross-site Origin (`https://evil.example.com`) still 403; missing Origin still 403; look-alike `manus.space.evil.com` still 403 (4 new contracts)
 - [x] originGuard.test.ts now has 11 cases (was 7), originGuardIntegration.test.ts unchanged 7 — both green
 - [x] Full vitest 36 files / 264 tests passing
+
+
+## Phase 17 — Adopt mattpocock/skills patterns
+
+- [x] Cloned `github.com/mattpocock/skills`, inventoried 19 skills, picked 4 high-value: `migrate-to-shoehorn`, `ubiquitous-language`, `domain-model`, `improve-codebase-architecture` (LANGUAGE.md vocabulary). Pre-commit deferred.
+- [x] Installed `@total-typescript/shoehorn`. Migrated 6 test files (`auth.logout`, `dropshopRouter`, `salonRouter`, `twilioWebhook.mms`, `draftStateMachine`, `rejectCategory`) — 25 cast sites. Remaining 15 `as` sites are not shoehorn targets (unknown narrowing, generic Record cast, empty array annotation).
+- [x] Wrote `UBIQUITOUS_LANGUAGE.md` at repo root with 6 term tables (Conversation, Approval, Send, Escalation, Knowledge, Actors, Pilots), relationships, dialogue, flagged ambiguities (User vs Owner vs Customer; Reply vs Draft vs Outbound; Send overload; Mode overload).
+- [x] Created `docs/adr/` with 7 ADRs (HITL default, Two-Phase Send, originGuard suffix policy, MMS Critical Escalation, embedding fallback, Manus-only OAuth, shadow-mode integration) + index README.
+- [x] Appended `CODE_AUDIT.md` § 5 with deepening vocabulary (Module/Interface/Depth/Seam/Adapter) + 3 candidate deepenings (Home.tsx DemoStage, MessageTransport adapter for Twilio, RagRetriever adapter for embedding/keyword).
+- [x] Full vitest passes (264 tests across 36 files).

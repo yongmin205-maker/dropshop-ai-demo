@@ -78,6 +78,7 @@ vi.mock("./db", () => ({
 
 import { registerTwilioWebhook } from "./twilioWebhook";
 import { sendSms } from "./twilio";
+import { fromAny, fromPartial } from "@total-typescript/shoehorn";
 import { draftAgentReply } from "./aiAgent";
 
 interface RouteHandler {
@@ -86,11 +87,11 @@ interface RouteHandler {
 
 function buildHarness(): { handler: RouteHandler; res: () => MockRes } {
   let captured: RouteHandler | null = null;
-  const fakeApp = {
+  const fakeApp = fromPartial<Express>({
     post: (path: string, h: RouteHandler) => {
       if (path === "/api/twilio/sms") captured = h;
     },
-  } as unknown as Express;
+  });
   registerTwilioWebhook(fakeApp);
   if (!captured) throw new Error("webhook handler not registered");
   return { handler: captured, res: makeRes };
@@ -107,13 +108,13 @@ class MockRes {
 function makeRes(): MockRes { return new MockRes(); }
 
 function makeReq(body: Record<string, string>, headers: Record<string, string> = {}): Request {
-  return {
+  return fromPartial<Request>({
     body,
     headers: { "x-twilio-signature": "sig", ...headers },
     protocol: "https",
     originalUrl: "/api/twilio/sms",
     get: (h: string) => headers[h.toLowerCase()],
-  } as unknown as Request;
+  });
 }
 
 beforeEach(() => {
@@ -139,7 +140,7 @@ describe("twilioWebhook MMS contract", () => {
         MediaUrl0: "https://twilio.example/img1.jpg",
         MediaContentType0: "image/jpeg",
       }),
-      res as unknown as Response,
+      fromAny<Response>(res),
     );
 
     expect(res.statusCode).toBe(200);
@@ -182,7 +183,7 @@ describe("twilioWebhook MMS contract", () => {
       params[`MediaUrl${i}`] = `https://twilio.example/img${i}.jpg`;
       params[`MediaContentType${i}`] = "image/jpeg";
     }
-    await handler(makeReq(params), res as unknown as Response);
+    await handler(makeReq(params), fromAny<Response>(res));
 
     expect(res.statusCode).toBe(200);
     expect(dbState.appendedMessages).toHaveLength(1);
@@ -205,7 +206,7 @@ describe("twilioWebhook MMS contract", () => {
         MediaUrl0: "https://twilio.example/x.jpg",
         MediaContentType0: "image/jpeg",
       }),
-      res as unknown as Response,
+      fromAny<Response>(res),
     );
 
     expect((sendSms as any)).not.toHaveBeenCalled();
@@ -222,7 +223,7 @@ describe("twilioWebhook MMS contract", () => {
         MessageSid: "SM_mms_empty",
         NumMedia: "0",
       }),
-      res as unknown as Response,
+      fromAny<Response>(res),
     );
     expect(res.statusCode).toBe(400);
     expect(dbState.appendedMessages).toHaveLength(0);

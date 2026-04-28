@@ -1,3 +1,4 @@
+import { fromPartial } from "@total-typescript/shoehorn";
 import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import { COOKIE_NAME } from "../shared/const";
@@ -27,15 +28,15 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
 
   const ctx: TrpcContext = {
     user,
-    req: {
+    req: fromPartial<TrpcContext["req"]>({
       protocol: "https",
       headers: {},
-    } as TrpcContext["req"],
-    res: {
+    }),
+    res: fromPartial<TrpcContext["res"]>({
       clearCookie: (name: string, options: Record<string, unknown>) => {
         clearedCookies.push({ name, options });
       },
-    } as TrpcContext["res"],
+    }),
   };
 
   return { ctx, clearedCookies };

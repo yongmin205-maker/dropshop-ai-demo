@@ -4,6 +4,7 @@ vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
 }));
 
+import { fromPartial } from "@total-typescript/shoehorn";
 import { invokeLLM } from "./_core/llm";
 import { appRouter } from "./routers";
 
@@ -27,9 +28,11 @@ function reply(text: string) {
 
 function makeCaller() {
   // Salon endpoints are public, so an empty ctx is fine.
-  return appRouter.createCaller({
-    user: null,
-  } as unknown as Parameters<typeof appRouter.createCaller>[0]);
+  return appRouter.createCaller(
+    fromPartial<Parameters<typeof appRouter.createCaller>[0]>({
+      user: null,
+    }),
+  );
 }
 
 describe("salon router contracts", () => {

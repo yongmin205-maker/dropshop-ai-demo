@@ -170,6 +170,7 @@ const db = (await import("./db")) as unknown as typeof import("./db") & {
   ) => { id: number; phone: string; customerName: string | null; escalated: number };
 };
 const twilio = await import("./twilio");
+const { fromPartial } = await import("@total-typescript/shoehorn");
 
 beforeEach(() => {
   db.__state.drafts.clear();
@@ -181,20 +182,24 @@ beforeEach(() => {
 
 describe("transitionDraftStatus — atomic state machine", () => {
   it("flips pending_approval → approved on first call and returns the row", async () => {
-    const draft = await db.insertDraft({
-      inboundMessageId: 1,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
+    const draft = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 1,
+        revision: 1,
+      }),
+    );
     const moved = await db.transitionDraftStatus(draft.id, "approved");
     expect(moved).not.toBeNull();
     expect(moved!.status).toBe("approved");
   });
 
   it("rejects a second concurrent transition (returns null)", async () => {
-    const draft = await db.insertDraft({
-      inboundMessageId: 1,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
+    const draft = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 1,
+        revision: 1,
+      }),
+    );
     const first = await db.transitionDraftStatus(draft.id, "approved");
     const second = await db.transitionDraftStatus(draft.id, "approved");
     expect(first).not.toBeNull();
@@ -202,10 +207,12 @@ describe("transitionDraftStatus — atomic state machine", () => {
   });
 
   it("does NOT allow approve→rejected once already approved", async () => {
-    const draft = await db.insertDraft({
-      inboundMessageId: 1,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
+    const draft = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 1,
+        revision: 1,
+      }),
+    );
     await db.transitionDraftStatus(draft.id, "approved");
     const second = await db.transitionDraftStatus(draft.id, "rejected");
     expect(second).toBeNull();
@@ -214,18 +221,24 @@ describe("transitionDraftStatus — atomic state machine", () => {
 
 describe("supersedeOtherPendingDrafts", () => {
   it("marks every other pending draft for the same inbound as superseded", async () => {
-    const a = await db.insertDraft({
-      inboundMessageId: 50,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
-    const b = await db.insertDraft({
-      inboundMessageId: 50,
-      revision: 2,
-    } as Parameters<typeof db.insertDraft>[0]);
-    const c = await db.insertDraft({
-      inboundMessageId: 99,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
+    const a = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 50,
+        revision: 1,
+      }),
+    );
+    const b = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 50,
+        revision: 2,
+      }),
+    );
+    const c = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 99,
+        revision: 1,
+      }),
+    );
 
     await db.supersedeOtherPendingDrafts(50, b.id);
 
@@ -240,10 +253,12 @@ describe("supersedeOtherPendingDrafts", () => {
 
 describe("getMessageByTwilioSid — webhook idempotency", () => {
   it("returns the existing message when the same sid is seen twice", async () => {
-    await db.appendMessage({
-      twilioSid: "SM-dup-001",
-      status: "sent",
-    } as Parameters<typeof db.appendMessage>[0]);
+    await db.appendMessage(
+      fromPartial<Parameters<typeof db.appendMessage>[0]>({
+        twilioSid: "SM-dup-001",
+        status: "sent",
+      }),
+    );
     const found = await db.getMessageByTwilioSid("SM-dup-001");
     expect(found).toBeDefined();
     expect(found!.twilioSid).toBe("SM-dup-001");
@@ -257,10 +272,12 @@ describe("getMessageByTwilioSid — webhook idempotency", () => {
 
 describe("Two-phase send — outbound row lifecycle", () => {
   it("starts queued, transitions to sent only after Twilio ok", async () => {
-    const outbound = await db.appendMessage({
-      twilioSid: null,
-      status: "queued",
-    } as Parameters<typeof db.appendMessage>[0]);
+    const outbound = await db.appendMessage(
+      fromPartial<Parameters<typeof db.appendMessage>[0]>({
+        twilioSid: null,
+        status: "queued",
+      }),
+    );
     expect(db.__state.messages.get(outbound.id)!.status).toBe("queued");
 
     // Simulate Twilio ok callback flow
@@ -274,15 +291,19 @@ describe("Two-phase send — outbound row lifecycle", () => {
   });
 
   it("on Twilio failure: outbound flips to failed AND draft is reopened to pending", async () => {
-    const draft = await db.insertDraft({
-      inboundMessageId: 1,
-      revision: 1,
-    } as Parameters<typeof db.insertDraft>[0]);
+    const draft = await db.insertDraft(
+      fromPartial<Parameters<typeof db.insertDraft>[0]>({
+        inboundMessageId: 1,
+        revision: 1,
+      }),
+    );
     await db.transitionDraftStatus(draft.id, "approved");
-    const outbound = await db.appendMessage({
-      twilioSid: null,
-      status: "queued",
-    } as Parameters<typeof db.appendMessage>[0]);
+    const outbound = await db.appendMessage(
+      fromPartial<Parameters<typeof db.appendMessage>[0]>({
+        twilioSid: null,
+        status: "queued",
+      }),
+    );
 
     // Simulate failure path
     await db.updateMessageDelivery(outbound.id, {
@@ -299,12 +320,16 @@ describe("Two-phase send — outbound row lifecycle", () => {
 describe("resolveEscalation — escalation flag bookkeeping", () => {
   it("clears conversations.escalated only when no other open escalations remain", async () => {
     db.seedConversation({ id: 7, escalated: 0 });
-    const e1 = await db.createEscalation({
-      conversationId: 7,
-    } as Parameters<typeof db.createEscalation>[0]);
-    const e2 = await db.createEscalation({
-      conversationId: 7,
-    } as Parameters<typeof db.createEscalation>[0]);
+    const e1 = await db.createEscalation(
+      fromPartial<Parameters<typeof db.createEscalation>[0]>({
+        conversationId: 7,
+      }),
+    );
+    const e2 = await db.createEscalation(
+      fromPartial<Parameters<typeof db.createEscalation>[0]>({
+        conversationId: 7,
+      }),
+    );
     expect(db.__state.conversations.get(7)!.escalated).toBe(1);
 
     await db.resolveEscalation(e1.id);
