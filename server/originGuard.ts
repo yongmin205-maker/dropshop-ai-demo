@@ -11,15 +11,22 @@
  *  - Allow any GET / HEAD / OPTIONS (no state change).
  *  - For POST/PUT/PATCH/DELETE: require `Origin` (or fall back to `Referer`).
  *  - If `ALLOWED_ORIGINS` env is set, the Origin must be in the explicit
- *    allow-list (comma-separated, exact match).
+ *    allow-list (comma-separated, exact match). This is the strict mode.
  *  - Otherwise, fall back to a host-suffix policy: any Origin whose hostname
- *    ends with `.manus.space` or `.manus.computer` is accepted. These two
- *    suffixes cover (a) the production deployment (`*.manus.space`) and (b)
- *    the sandbox dev preview (`*.manus.computer`). Comparing against the
- *    request's own `Host` header is unreliable behind the Manus reverse proxy
- *    — the proxy rewrites `Host` to the internal Cloud-Run host while leaving
- *    the browser's `Origin` set to the public domain, so a strict comparison
- *    rejects every legitimate request.
+ *    ends with `.manus.space` or `.manus.computer` is accepted. The fallback
+ *    exists for the dev sandbox (where the URL changes per session) and for
+ *    the production deploy until ADR 0003's follow-up sets ALLOWED_ORIGINS
+ *    explicitly. When the fallback approves a request in `NODE_ENV=production`
+ *    we emit a `[originGuard] fallback-used` log so the gap is visible — the
+ *    request is still allowed (we are not breaking live traffic), but the log
+ *    line is the trigger to set ALLOWED_ORIGINS for prod.
+ *
+ * Why we did not flip to hard-deny in production: the deployed origin is
+ * known and stable today (`https://dropshopai-vx45nyzf.manus.space`), but
+ * domain renames and custom-domain bindings happen via the Management UI
+ * without redeploys, and a stale ALLOWED_ORIGINS would 403 every mutation
+ * with no easy recovery. The observability-first approach lets us notice and
+ * fix before tightening.
  *
  * Security tradeoff: the suffix policy means any other `*.manus.space` app the
  * operator opens could in principle issue a cross-origin POST to this app.
@@ -136,5 +143,30 @@ export function requireSameOrigin(req: Request, res: Response, next: NextFunctio
       error: "CSRF: Origin is not a trusted Manus domain",
     });
   }
+  // Observability hook: in production the suffix fallback should eventually
+  // be replaced by an explicit ALLOWED_ORIGINS. Surface its use so the gap is
+  // visible in logs without breaking live traffic.
+  if (process.env.NODE_ENV === "production") {
+    logFallbackUsed(hostname, req);
+  }
   return next();
+}
+
+// Same rate-limited pattern as logCsrfRejection — we want a few examples per
+// process, not a flood. Reset to a small budget on boot so a long-running
+// process eventually quiets down.
+let fallbackLogsRemaining = 5;
+function logFallbackUsed(hostname: string, req: Request) {
+  if (fallbackLogsRemaining <= 0) return;
+  fallbackLogsRemaining -= 1;
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[originGuard] fallback-used",
+    JSON.stringify({
+      hostname,
+      method: req.method,
+      url: req.originalUrl,
+      hint: "Set ALLOWED_ORIGINS env to the exact origin(s) to remove the suffix fallback in production.",
+    }),
+  );
 }

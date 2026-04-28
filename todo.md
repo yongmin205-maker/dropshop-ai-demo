@@ -376,3 +376,16 @@ The `[~]` marker is used here instead of `[ ]` so the file no longer reports fal
 - [x] Created `docs/adr/` with 7 ADRs (HITL default, Two-Phase Send, originGuard suffix policy, MMS Critical Escalation, embedding fallback, Manus-only OAuth, shadow-mode integration) + index README.
 - [x] Appended `CODE_AUDIT.md` § 5 with deepening vocabulary (Module/Interface/Depth/Seam/Adapter) + 3 candidate deepenings (Home.tsx DemoStage, MessageTransport adapter for Twilio, RagRetriever adapter for embedding/keyword).
 - [x] Full vitest passes (264 tests across 36 files).
+
+
+## Phase 18 — MessageTransport adapter (CODE_AUDIT §5.3 Candidate 2)
+
+- [x] Inspected every caller of `sendSms` and the `if (env.LIVE_MODE)` branch points (3 sites: routers.approve, routers.simulator.sendMessage, twilioWebhook auto-send)
+- [x] Defined `MessageTransport` interface in `server/messaging/transport.ts` with vocabulary `{ ok: true, sid } | { ok: false, error, code, retryable }`
+- [x] Implemented `TwilioAdapter` (delegates to existing `sendSms`), `SimulatorTransport` (with per-instance recorded sends + reset), `ShadowGuardTransport` (defensive)
+- [x] Boot-time selector `getMessageTransport()` requires BOTH `DROPSHOP_LIVE_MODE=1` AND Twilio creds present — defense against accidental leak in dev/preview
+- [x] **Decision: Option B** — do NOT migrate the 3 callers today (would change Simulator-mode UI semantics from "send failed" to "sent SIM"). Recorded in ADR 0008. Migration trigger: OpenPhone or Nextiva integration.
+- [x] New tests: `server/messaging/transport.test.ts` (13 contract tests across all 3 adapters + selector). Existing `twoPhaseSend.test.ts` and `sendSmsCap.test.ts` unchanged — no regression.
+- [x] All tests green: 37 files / 279 tests (was 36 / 264; added 13 transport + 2 originGuard).
+- [x] Added ADR 0008 (MessageTransport seam, Option B rationale) and ADR-index entry.
+- [x] ADR 0003 follow-up: tightened `originGuard.ts` with `[originGuard] fallback-used` warn log when suffix fallback is used in `NODE_ENV=production`. Request still allowed (no live-traffic regression). Two new tests pin the observability behavior. The log line is the trigger to set `ALLOWED_ORIGINS` env explicitly via webdev secrets when domain stabilizes.

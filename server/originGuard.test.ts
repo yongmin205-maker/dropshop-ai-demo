@@ -191,6 +191,67 @@ describe("§5.10 requireSameOrigin", () => {
     expect(res.status).toHaveBeenCalledWith(403);
   });
 
+  it("in NODE_ENV=production, suffix fallback emits a [originGuard] fallback-used warning (request still allowed)", () => {
+    const ORIG_NODE_ENV = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const next = vi.fn();
+      const res = mkRes() as any;
+      requireSameOrigin(
+        mkReq({
+          method: "POST",
+          origin: "https://dropshopai-vx45nyzf.manus.space",
+          host: "internal-pod-7",
+        }),
+        res,
+        next,
+      );
+      // The request must still be approved — we observe before enforcing.
+      expect(next).toHaveBeenCalledOnce();
+      expect(res.status).not.toHaveBeenCalled();
+      // And we must have logged the fallback usage with the hint.
+      const fallbackCall = warn.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("fallback-used"),
+      );
+      expect(fallbackCall, "expected a [originGuard] fallback-used warn call").toBeTruthy();
+      expect(JSON.stringify(fallbackCall![1])).toMatch(/ALLOWED_ORIGINS/);
+    } finally {
+      warn.mockRestore();
+      if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = ORIG_NODE_ENV;
+    }
+  });
+
+  it("in production, ALLOWED_ORIGINS bypasses the fallback-used warning entirely", () => {
+    const ORIG_NODE_ENV = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.ALLOWED_ORIGINS = "https://dropshopai-vx45nyzf.manus.space";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const next = vi.fn();
+      const res = mkRes() as any;
+      requireSameOrigin(
+        mkReq({
+          method: "POST",
+          origin: "https://dropshopai-vx45nyzf.manus.space",
+          host: "internal-pod-7",
+        }),
+        res,
+        next,
+      );
+      expect(next).toHaveBeenCalledOnce();
+      const fallbackCall = warn.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("fallback-used"),
+      );
+      expect(fallbackCall, "strict ALLOWED_ORIGINS path must NOT trigger the fallback warning").toBeFalsy();
+    } finally {
+      warn.mockRestore();
+      if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = ORIG_NODE_ENV;
+    }
+  });
+
   it("ALLOWED_ORIGINS allow-list takes precedence over same-host check", () => {
     process.env.ALLOWED_ORIGINS =
       "https://prod.manus.space,https://staging.manus.space";
