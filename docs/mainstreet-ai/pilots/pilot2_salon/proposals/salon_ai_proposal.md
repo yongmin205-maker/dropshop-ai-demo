@@ -38,13 +38,13 @@
 
 ### 시나리오 1. 손님 텍스트가 들어오면 AI가 답안을 만들고 사장님은 승인만 합니다
 
-![Salon AI Scheduler 중복 슬롯 자동 제안 화면](/home/ubuntu/dropshop-ai-demo/docs/salon_mockup_overlap.png)
+![Salon AI Scheduler 중복 슬롯 자동 제안 화면](/manus-storage/salon_mockup_overlap_c682579f.png)
 
 왼쪽은 손님과의 텍스트 화면입니다. "토요일 오후 2시 펌 가능할까요?"라는 메시지가 들어오자, 에이전트가 캘린더를 읽고 — 오른쪽에서 보시다시피 토요일 2시에 Lisa 손님 컬러가 진행 중이고 그 안에 30분짜리 처리 시간 갭이 있다는 것을 인식합니다 — 그 갭에 펌 시작을 끼워 넣자는 답안을 자동으로 작성합니다. 사장님은 "승인하고 전송" 한 번만 누르시면 됩니다.
 
 ### 시나리오 2. 매일 아침 에이전트가 오늘 빈 슬롯을 정리해 드립니다
 
-![Salon AI Scheduler 빈 슬롯 채우기 데일리 브리핑 화면](/home/ubuntu/dropshop-ai-demo/docs/salon_mockup_gapfiller.png)
+![Salon AI Scheduler 빈 슬롯 채우기 데일리 브리핑 화면](/manus-storage/salon_mockup_gapfiller_7d0895af.png)
 
 매일 오전 9시에 에이전트가 오늘 스케줄에서 빈 시간을 찾아 보여드립니다. 각 슬롯마다 "이 손님께 보내면 가장 좋다"고 판단한 후보 한 분을 추천하고, 보낼 메시지 초안까지 미리 작성합니다. 오른쪽 패널에서 보시다시피 이번 주에 회수된 시간, 예상 추가 매출, 예약 전환율도 함께 추적됩니다. 사장님은 한 번 훑어보시고 "SMS 보내기" 버튼만 누르시면 됩니다.
 
