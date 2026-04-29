@@ -167,9 +167,40 @@ describe("dropshop router — read paths return safe empties when DB is unavaila
 });
 
 describe("dropshop router — admin gating", () => {
-  it("escalations.resolve is publicly callable (operator action) and tolerates missing rows", async () => {
+  // NOTE: prior to fix/1-admin-procedures the only owner-side mutation locked
+  // to adminProcedure was demo.reset; drafts/simulator/escalations were
+  // publicProcedure and the originGuard suffix policy (ADR 0003) admitted any
+  // *.manus.space subdomain. A neighbouring Manus app the Owner visits could
+  // therefore fire approve / reject / resolve / sendMessage cross-origin and,
+  // in Live Mode, send real SMS. The pin below blocks that path.
+
+  it("escalations.resolve rejects unauthenticated callers (was publicProcedure pre-fix/1)", async () => {
     const caller = makePublicCaller();
+    await expect(caller.escalations.resolve({ id: 12345 })).rejects.toThrow();
+  });
+
+  it("escalations.resolve still works for the Owner (admin role)", async () => {
+    const caller = makeAdminCaller();
     await expect(caller.escalations.resolve({ id: 12345 })).resolves.toBeUndefined();
+  });
+
+  it("drafts.approve rejects unauthenticated callers", async () => {
+    const caller = makePublicCaller();
+    await expect(caller.drafts.approve({ draftId: 1 })).rejects.toThrow();
+  });
+
+  it("drafts.reject rejects unauthenticated callers", async () => {
+    const caller = makePublicCaller();
+    await expect(
+      caller.drafts.reject({ draftId: 1, category: "other", reason: "x" }),
+    ).rejects.toThrow();
+  });
+
+  it("simulator.sendMessage rejects unauthenticated callers", async () => {
+    const caller = makePublicCaller();
+    await expect(
+      caller.simulator.sendMessage({ phone: "+15555550100", body: "hi" }),
+    ).rejects.toThrow();
   });
 
   it("demo.reset rejects unauthenticated callers", async () => {

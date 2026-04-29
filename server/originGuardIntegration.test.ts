@@ -108,6 +108,24 @@ describe("§5.10 originGuard integration (real Express + supertest)", () => {
     }
   });
 
+  it("§5.10b suffix policy admits sibling Manus subdomains by design (CSRF risk surfaces *only* at the procedure layer)", async () => {
+    // Pre-fix/1, drafts.approve was publicProcedure: a sibling Manus app
+    // (e.g. "evil.manus.space") could fire cross-origin POST credentials:
+    // include and the originGuard suffix policy (ADR 0003) would let it
+    // through. The fix is at the tRPC layer (adminProcedure), not here —
+    // the guard intentionally still admits *.manus.space to keep dev
+    // sandbox URLs working. Pinning the dual-layer model: this test
+    // documents that the guard is NOT the line of defense for sibling
+    // subdomains. See dropshopRouter.test.ts for the procedure-level pin.
+    const app = makeApp();
+    const res = await request(app)
+      .post("/api/trpc/drafts.approve")
+      .set("Origin", "https://evil.manus.space")
+      .send({ draftId: 1 });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ reached: true });
+  });
+
   it("does NOT block the Twilio webhook (different mount point)", async () => {
     const app = makeApp();
     const res = await request(app)

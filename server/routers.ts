@@ -154,7 +154,7 @@ export const appRouter = router({
 
   escalations: router({
     list: publicProcedure.query(() => getOpenEscalations()),
-    resolve: publicProcedure
+    resolve: adminProcedure
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => resolveEscalation(input.id)),
   }),
@@ -179,7 +179,7 @@ export const appRouter = router({
      *   • Style example only persisted on a successful send (we don't want
      *     to "teach" the model from messages that never reached the customer).
      */
-    approve: publicProcedure
+    approve: adminProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         rateLimit({
@@ -328,7 +328,7 @@ export const appRouter = router({
      *     of any other pending drafts for the same inbound message) happen
      *     under a single end-to-end flow with explicit error propagation.
      */
-    reject: publicProcedure
+    reject: adminProcedure
       .input(
         z.object({
           draftId: z.number(),
@@ -550,7 +550,7 @@ export const appRouter = router({
 
   /* ---------- Simulator inbound message ---------- */
   simulator: router({
-    sendMessage: publicProcedure
+    sendMessage: adminProcedure
       .input(
         z.object({
           phone: z.string().min(5).max(32),
@@ -895,7 +895,7 @@ export const appRouter = router({
      * re-validate here — the operator's approval is the authoritative
      * sign-off in the HITL model.
      */
-    approveBooking: publicProcedure
+    approveBooking: adminProcedure
       .input(
         z.object({
           customerId: z.string().min(1).max(100),
@@ -938,7 +938,7 @@ export const appRouter = router({
       }),
 
     /** Reset the salon demo back to the seeded week (drops runtime appointments). */
-    resetDemo: publicProcedure.mutation(async () => {
+    resetDemo: adminProcedure.mutation(async () => {
       await resetSalonRuntime();
       return { ok: true };
     }),
@@ -949,7 +949,7 @@ export const appRouter = router({
      * SMS draft per candidate. Each draft carries a `bookingDraft`
      * the UI can submit through `salon.approveBooking` to commit.
      */
-    simulateNoShow: publicProcedure
+    simulateNoShow: adminProcedure
       .input(
         z.object({
           appointmentId: z.string().min(1).max(100),
@@ -1026,7 +1026,7 @@ export const appRouter = router({
       }),
 
     /** Generate (do not send) an AI draft for a simulated inbound message. */
-    draft: publicProcedure
+    draft: adminProcedure
       .input(
         z.object({
           phone: z.string().min(4),

@@ -27,10 +27,23 @@ function reply(text: string) {
 }
 
 function makeCaller() {
-  // Salon endpoints are public, so an empty ctx is fine.
+  // Salon mutations (draft, approveBooking, resetDemo, simulateNoShow) are
+  // adminProcedure as of fix/1. Read-only queries (listAppointments,
+  // getCustomer, findOverlapSlots, checkProcessingReminders) work for any
+  // role. We always seat an admin so the same helper covers both surfaces.
   return appRouter.createCaller(
     fromPartial<Parameters<typeof appRouter.createCaller>[0]>({
-      user: null,
+      user: fromPartial<NonNullable<Parameters<typeof appRouter.createCaller>[0]["user"]>>({
+        id: 1,
+        openId: "salon-test-admin",
+        email: "admin@dropshop.test",
+        name: "Salon Test Admin",
+        loginMethod: "manus",
+        role: "admin",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastSignedIn: new Date(),
+      }),
     }),
   );
 }
