@@ -57,7 +57,8 @@ import {
 } from "./messaging/twoPhaseSend";
 import { embedText, isEmbeddingFallbackActive } from "./embeddings";
 import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
-import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
+import { isE164, isLiveMode, smsSegmentCount } from "./twilio";
+import { getMessageTransport } from "./messaging/transport";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
 import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
 import {
@@ -213,13 +214,17 @@ export const appRouter = router({
         }
 
         const correlationId = inbound.correlationId ?? newCorrelationId();
-        const live = isLiveMode();
+        const transport = getMessageTransport();
+        const isSimulator = transport.name === "simulator";
         const conv = await getConversationById(draft.conversationId);
 
         // ATOMIC: state transition + outbound row insert in one transaction.
-        // If the conditional UPDATE matches 0 rows (someone else handled it),
-        // we abort BEFORE inserting the outbound message so we never end up
-        // with an orphan "queued" outbound for a draft that is no longer ours.
+        // The outbound row always lands as "queued" — the transport's response
+        // (real Twilio sid OR synthetic SIM sid) is the source of truth for the
+        // sent flip. If the conditional UPDATE matches 0 rows (someone else
+        // handled the draft) we abort BEFORE inserting the outbound message
+        // so we never orphan a "queued" outbound for a draft that is no
+        // longer ours.
         const txResult = await withTransaction(async (tx) => {
           const moved = await transitionDraftStatusTx(tx, input.draftId, "approved");
           if (!moved) return null;
@@ -229,8 +234,8 @@ export const appRouter = router({
             sender: "ai",
             body: draft.body,
             intent: draft.intent,
-            mode: live ? "live" : "simulator",
-            status: live ? "queued" : "sent",
+            mode: isSimulator ? "simulator" : "live",
+            status: "queued",
             correlationId,
           });
           return { outbound };
@@ -243,66 +248,51 @@ export const appRouter = router({
         }
         const { outbound } = txResult;
 
-        // Phase 2 (live mode only): hand off to Twilio. The Twilio HTTP call
-        // happens OUTSIDE any open DB transaction (holding a tx open across an
-        // upstream RPC would burn a connection for hundreds of ms and risks
-        // pool exhaustion under load). Once the carrier answers, we record the
-        // outcome inside ONE transaction so the delivery flip, draft re-open
-        // (failure case), and processing-log row commit together. Pre-fix/2
-        // those writes ran outside any tx — a crash between Twilio ack and
-        // the bare `updateMessageDelivery` call left a confirmed-sent SMS
-        // visible as `queued` forever, which the stuck-queued-row sweeper
-        // then alarmed on.
+        // Phase 2: hand off to the configured transport. The HTTP / synthetic
+        // call happens OUTSIDE any open DB transaction (holding a tx across
+        // an upstream RPC burns connections and risks pool exhaustion).
+        // Once the transport answers, the outcome is recorded inside ONE
+        // transaction via the shared twoPhaseSend helpers so the delivery
+        // flip, draft re-open (failure case) and audit log row commit
+        // together.
+        const phone = conv?.phone ?? "";
+        const sendResult = await transport.send(phone, draft.body);
+        const completionCtx = {
+          conversationId: draft.conversationId,
+          inboundMessageId: draft.inboundMessageId,
+          outboundMessageId: outbound.id,
+          draftId: draft.id,
+          correlationId,
+        };
         let liveSendInfo: { ok: boolean; sid?: string; error?: string } | null = null;
-        if (live) {
-          const phone = conv?.phone ?? "";
-          const sendResult = await sendSms(phone, draft.body);
-          const completionCtx = {
-            conversationId: draft.conversationId,
-            inboundMessageId: draft.inboundMessageId,
-            outboundMessageId: outbound.id,
-            draftId: draft.id,
-            correlationId,
-          };
-          if (sendResult.ok) {
-            await withTransaction(async (tx) => {
-              await recordTwoPhaseSendSuccess(tx, {
-                ...completionCtx,
-                twilioSid: sendResult.sid,
-                logLabel: `Approved & dispatched via Twilio`,
-              });
+        if (sendResult.ok) {
+          const successLabel = isSimulator
+            ? `Delivered in Simulator (no real SMS) · sid ${sendResult.sid}`
+            : `Sent via Twilio · sid ${sendResult.sid}`;
+          await withTransaction(async (tx) => {
+            await recordTwoPhaseSendSuccess(tx, {
+              ...completionCtx,
+              twilioSid: sendResult.sid,
+              logLabel: successLabel,
             });
-            liveSendInfo = { ok: true, sid: sendResult.sid };
-          } else {
-            // Atomic failure recovery: delivery → failed, draft → pending,
-            // audit log all commit together via the shared helper. The throw
-            // fires AFTER the tx commits so the caller sees BAD_GATEWAY only
-            // once the rollback is durable.
-            await withTransaction(async (tx) => {
-              await recordTwoPhaseSendFailure(tx, {
-                ...completionCtx,
-                error: sendResult.error,
-                logLabel: `Twilio rejected the message — draft re-opened for retry`,
-              });
-            });
-            throw new TRPCError({
-              code: "BAD_GATEWAY",
-              message: `Twilio send failed: ${sendResult.error}`,
-            });
-          }
+          });
+          liveSendInfo = { ok: true, sid: sendResult.sid };
         } else {
-          // Simulator mode: no carrier call, single processing-log write.
-          await appendProcessingLog({
-            conversationId: draft.conversationId,
-            messageId: draft.inboundMessageId,
-            step: "sent",
-            label: `Approved & delivered in Simulator Mode`,
-            detail: {
-              draftId: draft.id,
-              outboundId: outbound.id,
-              twilioSid: null,
-            },
-            correlationId,
+          // Atomic failure recovery: delivery → failed, draft → pending,
+          // audit log all commit together. Throw fires AFTER the tx commits
+          // so the caller sees BAD_GATEWAY only once the rollback is durable.
+          await withTransaction(async (tx) => {
+            await recordTwoPhaseSendFailure(tx, {
+              ...completionCtx,
+              error: sendResult.error,
+              logLabel: isSimulator
+                ? `Simulator transport rejected the draft — re-opened for retry`
+                : `Twilio rejected the message — draft re-opened for retry`,
+            });
+          });
+          throw new TRPCError({
+            code: "BAD_GATEWAY",
+            message: `${transport.name} send failed: ${sendResult.error}`,
           });
         }
 
@@ -677,10 +667,14 @@ export const appRouter = router({
         if (!result.escalated && result.reply && draftId !== null) {
 
           if (process.env.DROPSHOP_AUTO_SEND === "1") {
-            // Confidence-auto-send path (off by default for safety). Still
-            // honours two-phase send semantics. ATOMIC: state transition +
-            // outbound row land together; Twilio call is OUT of the txn.
-            const live = isLiveMode();
+            // Confidence-auto-send path (off by default for safety). Routed
+            // through getMessageTransport() so Live and Simulator modes share
+            // the same Two-Phase Send shape: queued → sent (with sid) on
+            // success, queued → failed + draft re-opened on transport
+            // rejection. ATOMIC: state transition + outbound row land
+            // together; transport call is OUT of the txn.
+            const transport = getMessageTransport();
+            const isSimulator = transport.name === "simulator";
             const auto = await withTransaction(async (tx) => {
               const moved = await transitionDraftStatusTx(tx, draftId!, "approved");
               if (!moved) return null;
@@ -690,14 +684,14 @@ export const appRouter = router({
                 sender: "ai",
                 body: result.reply!,
                 intent: result.intent,
-                mode: live ? "live" : "simulator",
-                status: live ? "queued" : "sent",
+                mode: isSimulator ? "simulator" : "live",
+                status: "queued",
                 correlationId,
               });
               return { outbound };
             });
-            if (auto && live) {
-              const sendResult = await sendSms(input.phone, result.reply);
+            if (auto) {
+              const sendResult = await transport.send(input.phone, result.reply);
               const completionCtx = {
                 conversationId: conversation.id,
                 inboundMessageId: inbound.id,
@@ -710,29 +704,19 @@ export const appRouter = router({
                   await recordTwoPhaseSendSuccess(tx, {
                     ...completionCtx,
                     twilioSid: sendResult.sid,
-                    logLabel: `Auto-sent via Twilio (auto-send mode on)`,
+                    logLabel: isSimulator
+                      ? `Auto-delivered in Simulator (no real SMS) · sid ${sendResult.sid}`
+                      : `Auto-sent via Twilio · sid ${sendResult.sid}`,
                   });
                 } else {
                   await recordTwoPhaseSendFailure(tx, {
                     ...completionCtx,
                     error: sendResult.error,
-                    logLabel: `Twilio rejected auto-sent draft — re-opened for manager review`,
+                    logLabel: isSimulator
+                      ? `Simulator transport rejected auto-sent draft — re-opened`
+                      : `Twilio rejected auto-sent draft — re-opened for manager review`,
                   });
                 }
-              });
-            } else if (auto) {
-              // Simulator auto-send: no Twilio call. One ack log row.
-              // (Pre-fix/3 the live failure branch ALSO landed here and
-              // logged a misleading "sent" row outside the failure tx; the
-              // helpers fix that — failure now produces a single send_failed
-              // row inside the tx.)
-              await appendProcessingLog({
-                conversationId: conversation.id,
-                messageId: inbound.id,
-                step: "sent",
-                label: `Auto-delivered in Simulator Mode (auto-send mode on)`,
-                detail: { reply: result.reply, outboundId: auto.outbound.id },
-                correlationId,
               });
             }
           }

@@ -22,21 +22,73 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 // Block real DB access for every case in this file. Each test then layers
 // per-call return values via `mockResolvedValueOnce`. (Procedures should be
 // resilient to DB-unavailable for read paths.)
+// Approve-flow stubs used by the fix/4 simulator-sid regression.
+const approveStub = {
+  draft: {
+    id: 9001,
+    conversationId: 7,
+    inboundMessageId: 70,
+    intent: "Pickup Request" as const,
+    body: "your pickup is confirmed.\n— DropShop",
+    status: "pending_approval" as const,
+    correlationId: "corr-test",
+    revision: 1,
+  },
+  inbound: {
+    id: 70,
+    conversationId: 7,
+    direction: "inbound" as const,
+    sender: "customer",
+    body: "Pickup for Marie please",
+    correlationId: "corr-test",
+  },
+  conversation: { id: 7, phone: "+15555550100", customerName: "Marie" },
+};
+
 vi.mock("./db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./db")>();
+  let outboundSeq = 5000;
   return {
     ...actual,
     getDb: vi.fn(async () => null),
     listConversations: vi.fn(async () => []),
-    getConversationMessages: vi.fn(async () => []),
+    getConversationMessages: vi.fn(async () => [approveStub.inbound]),
     getConversationLogs: vi.fn(async () => []),
     getOpenEscalations: vi.fn(async () => []),
     listPendingDrafts: vi.fn(async () => []),
     getCustomerProfile: vi.fn(async () => null),
     resolveEscalation: vi.fn(async () => undefined),
     resetDemoData: vi.fn(async () => ({ ok: true })),
+    // Approve path: DB helpers are stubbed so the call goes through the
+    // transport seam without needing a real MySQL.
+    getDraftById: vi.fn(async () => approveStub.draft),
+    getConversationById: vi.fn(async () => approveStub.conversation),
+    newCorrelationId: vi.fn(() => "corr-test"),
+    withTransaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ __mockTx: true }),
+    ),
+    transitionDraftStatusTx: vi.fn(async () => approveStub.draft),
+    appendMessageTx: vi.fn(async () => ({ id: ++outboundSeq })),
+    updateMessageDeliveryTx: vi.fn(async () => undefined),
+    updateDraftStatusTx: vi.fn(async () => undefined),
+    appendProcessingLogTx: vi.fn(async () => undefined),
+    appendProcessingLog: vi.fn(async () => undefined),
+    insertStyleExample: vi.fn(async () => ({ id: 1 })),
   };
 });
+
+// embeddings is best-effort inside drafts.approve; stub the call.
+vi.mock("./embeddings", () => ({
+  embedText: vi.fn(async () => [0.1, 0.2, 0.3]),
+  topK: vi.fn(() => []),
+  ragRetrievalDefaults: vi.fn(() => ({
+    topKKnowledge: 3,
+    topKExamples: 3,
+    topKRejections: 3,
+    minScore: 0.1,
+  })),
+  isEmbeddingFallbackActive: vi.fn(() => false),
+}));
 
 // Skip seeding side effects so tests stay isolated from the real DB.
 vi.mock("./mockCleanCloud", () => ({
@@ -213,5 +265,24 @@ describe("dropshop router — admin gating", () => {
     // adminProcedure short-circuits non-admins, so we go through admin caller.
     const caller = makeAdminCaller();
     await expect(caller.demo.reset()).rejects.toThrow(/ALLOW_DEMO_RESET/);
+  });
+});
+
+describe("dropshop router — drafts.approve transport migration (fix/4)", () => {
+  // The pin: in Simulator Mode (no Twilio creds, no DROPSHOP_LIVE_MODE) the
+  // approve flow now goes through getMessageTransport()/SimulatorTransport
+  // and returns a synthetic SIM-prefixed sid, NOT a Twilio call. Pre-fix/4
+  // the simulator branch bypassed the transport seam entirely and returned
+  // liveSendInfo:null. This ensures we did the migration without re-mocking
+  // ./twilio for every router test that exercises approve.
+  it("returns a SIM-prefixed sid in Simulator Mode", async () => {
+    delete process.env.DROPSHOP_LIVE_MODE;
+    delete process.env.TWILIO_ACCOUNT_SID;
+    delete process.env.TWILIO_AUTH_TOKEN;
+    delete process.env.TWILIO_PHONE_NUMBER;
+    const caller = makeAdminCaller();
+    const result = await caller.drafts.approve({ draftId: 9001 });
+    expect(result.ok).toBe(true);
+    expect(result.liveSendInfo?.sid).toMatch(/^SIM/);
   });
 });

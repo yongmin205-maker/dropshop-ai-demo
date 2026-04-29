@@ -1,5 +1,19 @@
 # MessageTransport seam — defined now, callers migrate later
 
+> **Status: Superseded by fix/4-transport-migration.** The "Option B" choice
+> below (define the seam, do not migrate the callers) was abandoned in fix/4
+> after a third-party review flagged the un-migrated callers as invisible
+> debt — the seam looked like progress in the diff but every live send still
+> bypassed it. fix/4 migrates `drafts.approve`, `simulator.sendMessage` and
+> `twilioWebhook` auto-send to consume `getMessageTransport().send()`; the
+> SimulatorTransport now ships a real synthetic SIM sid which the UI labels
+> "Delivered in Simulator (no real SMS)" so the operator never confuses
+> a fake delivery with a real one. Original Option-B reasoning is preserved
+> below for the audit trail; the **What ships now** / **What ships later**
+> sections describe the original plan, not the current state.
+
+# Original ADR (Option B, superseded)
+
 The codebase introduces a `MessageTransport` interface in `server/messaging/transport.ts` with three Adapters (`TwilioAdapter`, `SimulatorTransport`, `ShadowGuardTransport`) and a boot-time selector `getMessageTransport()`. **The three existing send call sites (`drafts.approve`, `simulator.sendMessage`, `twilioWebhook` auto-send) are not migrated to consume the transport in this round.** They continue to call `sendSms()` directly. The seam exists, but it is unused by the live paths today.
 
 ## Why this decision

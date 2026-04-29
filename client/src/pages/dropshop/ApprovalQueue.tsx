@@ -183,8 +183,18 @@ export function ApprovalQueue({
       if (ctx?.previous) utils.drafts.listPending.setData(undefined, ctx.previous);
       toast.error("Approve failed", { description: err.message });
     },
-    onSuccess: () => {
-      toast.success("Reply approved & sent");
+    onSuccess: (result) => {
+      // After fix/4 the server always routes through getMessageTransport()
+      // and returns a sid for both modes. Simulator sids are prefixed "SIM"
+      // so the operator never confuses a fake delivery with a real one.
+      const sid = result?.liveSendInfo?.sid;
+      if (sid && sid.startsWith("SIM")) {
+        toast.success("Delivered in Simulator (no real SMS)", { description: `sid ${sid}` });
+      } else if (sid) {
+        toast.success("Sent via Twilio", { description: `sid ${sid}` });
+      } else {
+        toast.success("Reply approved & sent");
+      }
     },
     onSettled: () => {
       utils.drafts.listPending.invalidate();

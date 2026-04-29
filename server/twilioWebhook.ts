@@ -27,9 +27,9 @@ import {
   isE164,
   isLiveMode,
   reconstructWebhookUrl,
-  sendSms,
   validateTwilioSignature,
 } from "./twilio";
+import { getMessageTransport } from "./messaging/transport";
 import type { InsertProcessingLog } from "../drizzle/schema";
 import { logServerError } from "./errorLog";
 import {
@@ -244,12 +244,15 @@ export function registerTwilioWebhook(app: Express) {
               correlationId,
             });
           } else {
-            // Phase 2: hand to Twilio (OUT of the transaction). Then commit
-            // the success or failure branch atomically via the shared helpers
-            // in `messaging/twoPhaseSend.ts` (same contract as the manual
-            // approve path; centralized so a future change to how we record
-            // a Twilio failure is a one-line edit, not three).
-            const sendResult = await sendSms(from, result.reply);
+            // Phase 2: hand to the configured transport (OUT of the
+            // transaction). The webhook only fires in live mode (the early
+            // !isLiveMode short-circuit at the top), so the transport will
+            // be Twilio in practice — but we go through getMessageTransport
+            // so a future OpenPhoneAdapter / NextivaAdapter swap is one line
+            // in transport.ts. Commit the result atomically via the shared
+            // helpers in messaging/twoPhaseSend.ts.
+            const transport = getMessageTransport();
+            const sendResult = await transport.send(from, result.reply);
             await withTransaction(async (tx) => {
               const ctx = {
                 conversationId: conversation.id,
@@ -262,14 +265,13 @@ export function registerTwilioWebhook(app: Express) {
                 await recordTwoPhaseSendSuccess(tx, {
                   ...ctx,
                   twilioSid: sendResult.sid,
-                  logLabel: "Auto-sent via Twilio (auto-send mode)",
+                  logLabel: `Auto-sent via ${transport.name} · sid ${sendResult.sid} (auto-send mode)`,
                 });
               } else {
                 await recordTwoPhaseSendFailure(tx, {
                   ...ctx,
                   error: sendResult.error,
-                  logLabel:
-                    "Twilio rejected auto-sent draft — re-opened for manager review",
+                  logLabel: `${transport.name} rejected auto-sent draft — re-opened for manager review`,
                 });
               }
             });
