@@ -239,59 +239,79 @@ export const appRouter = router({
         }
         const { outbound } = txResult;
 
-        // Phase 2 (live mode only): hand off to Twilio.
+        // Phase 2 (live mode only): hand off to Twilio. The Twilio HTTP call
+        // happens OUTSIDE any open DB transaction (holding a tx open across an
+        // upstream RPC would burn a connection for hundreds of ms and risks
+        // pool exhaustion under load). Once the carrier answers, we record the
+        // outcome inside ONE transaction so the delivery flip, draft re-open
+        // (failure case), and processing-log row commit together. Pre-fix/2
+        // those writes ran outside any tx — a crash between Twilio ack and
+        // the bare `updateMessageDelivery` call left a confirmed-sent SMS
+        // visible as `queued` forever, which the stuck-queued-row sweeper
+        // then alarmed on.
         let liveSendInfo: { ok: boolean; sid?: string; error?: string } | null = null;
         if (live) {
           const phone = conv?.phone ?? "";
-          const result = await sendSms(phone, draft.body);
-          if (result.ok) {
-            await updateMessageDelivery(outbound.id, {
-              status: "sent",
-              twilioSid: result.sid,
+          const sendResult = await sendSms(phone, draft.body);
+          if (sendResult.ok) {
+            await withTransaction(async (tx) => {
+              await updateMessageDeliveryTx(tx, outbound.id, {
+                status: "sent",
+                twilioSid: sendResult.sid,
+              });
+              await appendProcessingLogTx(tx, {
+                conversationId: draft.conversationId,
+                messageId: draft.inboundMessageId,
+                step: "sent",
+                label: `Approved & dispatched via Twilio`,
+                detail: {
+                  draftId: draft.id,
+                  outboundId: outbound.id,
+                  twilioSid: sendResult.sid,
+                },
+                correlationId,
+              });
             });
-            liveSendInfo = { ok: true, sid: result.sid };
+            liveSendInfo = { ok: true, sid: sendResult.sid };
           } else {
-            // Roll the draft back to pending so the manager sees the failure.
-            await updateMessageDelivery(outbound.id, {
-              status: "failed",
-              sendError: result.error.slice(0, SEND_ERROR_MAX),
-            });
-            // Re-open the draft for retry. Best-effort: a follow-up failure here
-            // must not mask the original Twilio error we are about to throw.
-            try {
-              await updateDraftStatus(draft.id, "pending_approval");
-            } catch {
-              /* ignore */
-            }
-            await appendProcessingLog({
-              conversationId: draft.conversationId,
-              messageId: draft.inboundMessageId,
-              step: "send_failed",
-              label: `Twilio rejected the message — draft re-opened for retry`,
-              detail: { error: result.error, outboundId: outbound.id },
-              correlationId,
+            // Atomic failure recovery: delivery → failed, draft → pending,
+            // and the audit log row all commit together. If the tx fails the
+            // throw below still fires and the caller surfaces BAD_GATEWAY.
+            await withTransaction(async (tx) => {
+              await updateMessageDeliveryTx(tx, outbound.id, {
+                status: "failed",
+                sendError: sendResult.error.slice(0, SEND_ERROR_MAX),
+              });
+              await updateDraftStatusTx(tx, draft.id, "pending_approval");
+              await appendProcessingLogTx(tx, {
+                conversationId: draft.conversationId,
+                messageId: draft.inboundMessageId,
+                step: "send_failed",
+                label: `Twilio rejected the message — draft re-opened for retry`,
+                detail: { error: sendResult.error, outboundId: outbound.id },
+                correlationId,
+              });
             });
             throw new TRPCError({
               code: "BAD_GATEWAY",
-              message: `Twilio send failed: ${result.error}`,
+              message: `Twilio send failed: ${sendResult.error}`,
             });
           }
+        } else {
+          // Simulator mode: no carrier call, single processing-log write.
+          await appendProcessingLog({
+            conversationId: draft.conversationId,
+            messageId: draft.inboundMessageId,
+            step: "sent",
+            label: `Approved & delivered in Simulator Mode`,
+            detail: {
+              draftId: draft.id,
+              outboundId: outbound.id,
+              twilioSid: null,
+            },
+            correlationId,
+          });
         }
-
-        await appendProcessingLog({
-          conversationId: draft.conversationId,
-          messageId: draft.inboundMessageId,
-          step: "sent",
-          label: live
-            ? `Approved & dispatched via Twilio`
-            : `Approved & delivered in Simulator Mode`,
-          detail: {
-            draftId: draft.id,
-            outboundId: outbound.id,
-            twilioSid: liveSendInfo?.sid ?? null,
-          },
-          correlationId,
-        });
 
         // Record approved style example (RAG Tier 2). Best-effort: if embedding
         // generation fails we still acknowledge the send — the customer
