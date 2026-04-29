@@ -50,7 +50,11 @@ import {
   withTransaction,
 } from "./db";
 import type { InsertProcessingLog } from "../drizzle/schema";
-import { SEND_ERROR_MAX } from "./messaging/twoPhaseSend";
+import {
+  recordTwoPhaseSendFailure,
+  recordTwoPhaseSendSuccess,
+  SEND_ERROR_MAX,
+} from "./messaging/twoPhaseSend";
 import { embedText, isEmbeddingFallbackActive } from "./embeddings";
 import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, sendSms, smsSegmentCount } from "./twilio";
@@ -253,43 +257,32 @@ export const appRouter = router({
         if (live) {
           const phone = conv?.phone ?? "";
           const sendResult = await sendSms(phone, draft.body);
+          const completionCtx = {
+            conversationId: draft.conversationId,
+            inboundMessageId: draft.inboundMessageId,
+            outboundMessageId: outbound.id,
+            draftId: draft.id,
+            correlationId,
+          };
           if (sendResult.ok) {
             await withTransaction(async (tx) => {
-              await updateMessageDeliveryTx(tx, outbound.id, {
-                status: "sent",
+              await recordTwoPhaseSendSuccess(tx, {
+                ...completionCtx,
                 twilioSid: sendResult.sid,
-              });
-              await appendProcessingLogTx(tx, {
-                conversationId: draft.conversationId,
-                messageId: draft.inboundMessageId,
-                step: "sent",
-                label: `Approved & dispatched via Twilio`,
-                detail: {
-                  draftId: draft.id,
-                  outboundId: outbound.id,
-                  twilioSid: sendResult.sid,
-                },
-                correlationId,
+                logLabel: `Approved & dispatched via Twilio`,
               });
             });
             liveSendInfo = { ok: true, sid: sendResult.sid };
           } else {
             // Atomic failure recovery: delivery → failed, draft → pending,
-            // and the audit log row all commit together. If the tx fails the
-            // throw below still fires and the caller surfaces BAD_GATEWAY.
+            // audit log all commit together via the shared helper. The throw
+            // fires AFTER the tx commits so the caller sees BAD_GATEWAY only
+            // once the rollback is durable.
             await withTransaction(async (tx) => {
-              await updateMessageDeliveryTx(tx, outbound.id, {
-                status: "failed",
-                sendError: sendResult.error.slice(0, SEND_ERROR_MAX),
-              });
-              await updateDraftStatusTx(tx, draft.id, "pending_approval");
-              await appendProcessingLogTx(tx, {
-                conversationId: draft.conversationId,
-                messageId: draft.inboundMessageId,
-                step: "send_failed",
-                label: `Twilio rejected the message — draft re-opened for retry`,
-                detail: { error: sendResult.error, outboundId: outbound.id },
-                correlationId,
+              await recordTwoPhaseSendFailure(tx, {
+                ...completionCtx,
+                error: sendResult.error,
+                logLabel: `Twilio rejected the message — draft re-opened for retry`,
               });
             });
             throw new TRPCError({
@@ -705,29 +698,39 @@ export const appRouter = router({
             });
             if (auto && live) {
               const sendResult = await sendSms(input.phone, result.reply);
+              const completionCtx = {
+                conversationId: conversation.id,
+                inboundMessageId: inbound.id,
+                outboundMessageId: auto.outbound.id,
+                draftId: draftId!,
+                correlationId,
+              };
               await withTransaction(async (tx) => {
                 if (sendResult.ok) {
-                  await updateMessageDeliveryTx(tx, auto.outbound.id, {
-                    status: "sent",
+                  await recordTwoPhaseSendSuccess(tx, {
+                    ...completionCtx,
                     twilioSid: sendResult.sid,
+                    logLabel: `Auto-sent via Twilio (auto-send mode on)`,
                   });
                 } else {
-                  await updateMessageDeliveryTx(tx, auto.outbound.id, {
-                    status: "failed",
-                    sendError: sendResult.error.slice(0, SEND_ERROR_MAX),
+                  await recordTwoPhaseSendFailure(tx, {
+                    ...completionCtx,
+                    error: sendResult.error,
+                    logLabel: `Twilio rejected auto-sent draft — re-opened for manager review`,
                   });
-                  await updateDraftStatusTx(tx, draftId!, "pending_approval");
                 }
               });
-            }
-            if (auto) {
+            } else if (auto) {
+              // Simulator auto-send: no Twilio call. One ack log row.
+              // (Pre-fix/3 the live failure branch ALSO landed here and
+              // logged a misleading "sent" row outside the failure tx; the
+              // helpers fix that — failure now produces a single send_failed
+              // row inside the tx.)
               await appendProcessingLog({
                 conversationId: conversation.id,
                 messageId: inbound.id,
                 step: "sent",
-                label: live
-                  ? `Auto-sent via Twilio (auto-send mode on)`
-                  : `Auto-delivered in Simulator Mode (auto-send mode on)`,
+                label: `Auto-delivered in Simulator Mode (auto-send mode on)`,
                 detail: { reply: result.reply, outboundId: auto.outbound.id },
                 correlationId,
               });
