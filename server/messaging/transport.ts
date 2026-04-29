@@ -151,8 +151,22 @@ export const ShadowGuardTransport: MessageTransport = {
  * to leak Twilio creds into a dev/preview env and start sending to real
  * customers. Both must be present.
  */
+/**
+ * Boot-time predicate: true iff the active transport will hit a real
+ * carrier. The same two-flag rule as `getMessageTransport()` (Twilio creds
+ * present AND `DROPSHOP_LIVE_MODE=1`).
+ *
+ * Surface this through `config.get.liveMode` so the operator-facing badge
+ * agrees with the transport that will actually run. Pre-patch the badge
+ * read raw `isLiveMode()` (creds only), so a process with creds but no
+ * kill-switch advertised "live" while transport silently used the
+ * simulator — a confusing dual reality.
+ */
+export function isTransportLive(): boolean {
+  return process.env.DROPSHOP_LIVE_MODE === "1" && isLiveMode();
+}
+
 export function getMessageTransport(): MessageTransport {
-  const liveModeFlag = process.env.DROPSHOP_LIVE_MODE === "1";
-  if (liveModeFlag && isLiveMode()) return TwilioAdapter;
+  if (isTransportLive()) return TwilioAdapter;
   return simulatorTransport;
 }

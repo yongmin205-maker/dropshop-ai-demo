@@ -58,7 +58,7 @@ import {
 import { embedText, isEmbeddingFallbackActive } from "./embeddings";
 import { ensureSeeded, getCustomerByPhone } from "./mockCleanCloud";
 import { isE164, isLiveMode, smsSegmentCount } from "./twilio";
-import { getMessageTransport } from "./messaging/transport";
+import { getMessageTransport, isTransportLive } from "./messaging/transport";
 import { seedKnowledgeIfEmpty } from "./knowledgeSeed";
 import { callerIp, noteLlmTokenUsage, rateLimit } from "./rateLimit";
 import {
@@ -118,7 +118,11 @@ export const appRouter = router({
 
   config: router({
     get: publicProcedure.query(() => ({
-      liveMode: isLiveMode(),
+      // Source of truth = the same predicate the transport selector uses,
+      // so the operator badge agrees with what would actually happen on a
+      // real send. Pre-patch this returned `isLiveMode()` (creds only) and
+      // could disagree with `getMessageTransport()`.
+      liveMode: isTransportLive(),
       twilioPhone: process.env.TWILIO_PHONE_NUMBER ?? null,
       autoSend: process.env.DROPSHOP_AUTO_SEND === "1",
       // Two flavors of "embedding degraded":
@@ -731,7 +735,7 @@ export const appRouter = router({
           steps: result.steps,
           draftId,
           escalationMessageId: escalationRow?.id ?? null,
-          liveMode: isLiveMode(),
+          liveMode: isTransportLive(),
           smsSegmentEstimate: result.reply ? smsSegmentCount(result.reply) : 0,
           correlationId,
         };

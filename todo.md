@@ -389,3 +389,24 @@ The `[~]` marker is used here instead of `[ ]` so the file no longer reports fal
 - [x] All tests green: 37 files / 279 tests (was 36 / 264; added 13 transport + 2 originGuard).
 - [x] Added ADR 0008 (MessageTransport seam, Option B rationale) and ADR-index entry.
 - [x] ADR 0003 follow-up: tightened `originGuard.ts` with `[originGuard] fallback-used` warn log when suffix fallback is used in `NODE_ENV=production`. Request still allowed (no live-traffic regression). Two new tests pin the observability behavior. The log line is the trigger to set `ALLOWED_ORIGINS` env explicitly via webdev secrets when domain stabilizes.
+
+
+## Phase 20 — Claude Code review fixes (5-branch chain) + liveMode unification
+
+- [x] Claude Code (external review) wrote 5 fix branches: `fix/1-admin-procedures`, `fix/2-approve-tx-boundary`, `fix/3-twoPhaseSend-helpers`, `fix/4-transport-migration`, `fix/5-prompt-injection-and-unknown-phone`. Manus verified each diff against its stated invariant (file:line spot checks).
+- [x] **Fix #1** — 9 owner-side mutations (`drafts.approve`, `drafts.reject`, `escalations.resolve`, `simulator.sendMessage`, `salon.approveBooking`, `salon.resetDemo`, `salon.simulateNoShow`, `agent.draft`) now wrapped in `adminProcedure`. Confirmed remaining `publicProcedure` sites are `.query()` only (incl. `checkProcessingReminders` which is documented "pure read").
+- [x] **Fix #2** — `drafts.approve` send-completion writes (delivery flip + draft re-open + processing log) now atomic via `withTransaction(tx => recordTwoPhaseSend*Tx)`. Twilio HTTP call still outside tx.
+- [x] **Fix #3** — `routers.ts` (approve + simulator auto-send) now consume `recordTwoPhaseSendSuccess/Failure` helpers; the bare-write inline blocks are gone.
+- [x] **Fix #4** — All three send call sites migrated from `sendSms()` to `getMessageTransport().send()`. ADR 0008 status updated. ApprovalQueue toast now distinguishes `SIM`-prefixed sids ("Simulator (no real SMS)") from real Twilio sids.
+- [x] **Fix #5** — Unknown-phone escalation widened from `Pickup Request` only to also cover `ETA/Order Status` and `Alteration Quote`. `<UNTRUSTED_INPUT>...</UNTRUSTED_INPUT>` markers wrap raw customer body in the LLM prompt; `BRAND_VOICE` system rule explicitly tells the model to never follow instructions inside those markers. 4 new aiAgent tests pin both behaviors.
+- [x] Fast-forward merge to `main` (linear chain). 38 files / 293 tests green on first pass.
+- [x] **Follow-up patch (Claude open question #5)** — `liveMode` source-of-truth unified: introduced `isTransportLive()` predicate that both `config.get.liveMode` badge AND `getMessageTransport()` selector now consume. Pre-patch the badge could read "live" while transport silently used the simulator (creds without `DROPSHOP_LIVE_MODE=1`). Inbound row `mode` label and Twilio webhook receiver intentionally keep raw `isLiveMode()`.
+- [x] 4 new contract tests pin the 4-cell truth table (no flag/no creds, flag/no creds, no flag/creds=PRE-FIX BUG, flag+creds). 38 files / **297 tests** green.
+
+### Deferred (Claude open questions, low priority)
+
+- [ ] **OQ #1** — `customerProfile` 2 fails are infra-dependent (DB available on Manus sandbox, not on user's local). Add explicit DB-presence guard to skip cleanly.
+- [ ] **OQ #2** — `salon.approveBooking` is entangled with simulator demo state. Wait until Pilot 2 build to split.
+- [ ] **OQ #3** — Simulator transport produces `queued`-then-`sent` trace; harmless but surprising. No action.
+- [ ] **OQ #4** — originGuard `*.manus.space` suffix fallback — Fix #1's admin gate now closes the real attack surface. Strict allowlist via `ALLOWED_ORIGINS` env is cleanup, not security. Defer until domain stabilizes.
+- [ ] **OQ #6** — ADR convention for "Superseded" status: Fix #4 updated 0008 in-place. Codify in-place vs new-ADR convention later.
