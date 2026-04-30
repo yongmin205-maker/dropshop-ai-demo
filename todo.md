@@ -410,3 +410,12 @@ The `[~]` marker is used here instead of `[ ]` so the file no longer reports fal
 - [ ] **OQ #3** — Simulator transport produces `queued`-then-`sent` trace; harmless but surprising. No action.
 - [ ] **OQ #4** — originGuard `*.manus.space` suffix fallback — Fix #1's admin gate now closes the real attack surface. Strict allowlist via `ALLOWED_ORIGINS` env is cleanup, not security. Defer until domain stabilizes.
 - [ ] **OQ #6** — ADR convention for "Superseded" status: Fix #4 updated 0008 in-place. Codify in-place vs new-ADR convention later.
+
+
+## Phase 21 — Claude-recommended pilot-1 cutover prep
+
+Priority ordered by Claude Code's cutover-risk analysis. Order is load-bearing: (1) raises approval quality before the friend sees first drafts; (2) prevents a same-day 403 outage when a custom domain lands; (3) removes a visible demo flicker surprise.
+
+- [x] **21a** — Done via Claude Code `feat/21a-ubiquitous-language-in-prompt` (sha `9c98f7c`). Added exported `DROPSHOP_VOCABULARY` constant (~40 lines, 5 sections: Actors / Message lifecycle / Approval & escalation / Intent labels / Knowledge surface) + `buildSystemPrompt()` function. `BRAND_VOICE` tightened with "your order" phrasing rule, "we'll text" (not "I'll text") authority rule, and an explicit ground-or-escalate rule. Claude also proactively reordered the user-message parts so `<UNTRUSTED_INPUT>` now comes AFTER Tool data + RAG (defense-in-depth against prompt injection). 3 new regression tests pin: (i) every load-bearing glossary term appears verbatim in the prompt, (ii) vocabulary precedes brand voice, (iii) untrusted input follows trusted context. 38 files / 300 tests green.
+- [ ] **21b** — `ALLOWED_ORIGINS` infrastructure: `env.ts` already accepts the var; need (i) webdev secret plumbing doc, (ii) "cutover checklist" in SESSION_RECOVERY.md saying "set this env on day-of custom-domain bind", (iii) a `scripts/verify-origin-config.ts` that prints the current effective policy so we can sanity-check prod.
+- [ ] **21c** — Simulator `queued → sent` semantic audit: grep UI/sweepers for any reader that assumes `mode='simulator'` implies `status !== 'queued'`. Fix any hit or document "no hits, safe".
