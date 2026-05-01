@@ -39,6 +39,7 @@
  */
 
 import type { NextFunction, Request, Response } from "express";
+import { ENV } from "./_core/env";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -69,7 +70,11 @@ function logCsrfRejection(reason: string, req: Request, extra?: Record<string, u
 }
 
 function parseAllowedOrigins(): Set<string> | null {
-  const raw = process.env.ALLOWED_ORIGINS;
+  // Single source of truth lives in `_core/env.ts` (ENV.allowedOrigins).
+  // Empty string => fall back to the suffix policy (ADR 0003). The set is
+  // re-parsed on every request so an env-var update on the running process
+  // (rare but possible on PaaS hot-reload) is picked up without a restart.
+  const raw = ENV.allowedOrigins;
   if (!raw) return null;
   return new Set(
     raw
