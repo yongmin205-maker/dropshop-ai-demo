@@ -12,6 +12,17 @@
 > below for the audit trail; the **What ships now** / **What ships later**
 > sections describe the original plan, not the current state.
 
+## Phase 21c — semantic audit attestation
+
+> Audit performed at sha `d8eff34` (post-21b merge). Scope: every reader of `messages.status` or `messages.mode='simulator'` in server, client, and tests. Findings:
+>
+> - No client-side code reads `messages.status` or `deliveryStatus` from outbound rows. The conversation panes render `direction` and `body` only; the queued vs sent transition is invisible to the UI.
+> - No server-side query filters outbound rows by `status='queued'`. Outbound reads are by primary key (`id`) or by `twilioSid` for Twilio status-callback reconciliation.
+> - No sweeper, cron, scheduler, or `setInterval` exists in the codebase that walks queued rows. The two-phase send completes synchronously inside the request that initiated it; rollback is via `withTransaction`.
+> - The 'real synthetic SIM sid' described under "Status: Superseded" is therefore observable only in the database and in `[transport] simulator/send` logs. No reader treats it as anomalous.
+>
+> Conclusion: fix/4 + isTransportLive() did not introduce a hidden state that downstream code mishandles. The seam migration is semantically clean.
+
 # Original ADR (Option B, superseded)
 
 The codebase introduces a `MessageTransport` interface in `server/messaging/transport.ts` with three Adapters (`TwilioAdapter`, `SimulatorTransport`, `ShadowGuardTransport`) and a boot-time selector `getMessageTransport()`. **The three existing send call sites (`drafts.approve`, `simulator.sendMessage`, `twilioWebhook` auto-send) are not migrated to consume the transport in this round.** They continue to call `sendSms()` directly. The seam exists, but it is unused by the live paths today.
