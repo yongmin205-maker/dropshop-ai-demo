@@ -19,3 +19,4 @@ The bug surfaced as a generic `403 Forbidden` on the cached Vite bundle, with no
 - Any future Manus-hosted look-alike subdomain inherits trust automatically. Acceptable because Manus controls the apex and we run no other apps on these subdomains today.
 - The look-alike-suffix attack (`manus.space.evil.com`) is explicitly tested as a 403 case (`server/originGuard.test.ts`).
 - If we ever serve from a custom domain, `ALLOWED_ORIGINS` **must** be set or the guard will reject all traffic.
+- (Phase 21b) The `ALLOWED_ORIGINS` env now flows through `server/_core/env.ts` (`ENV.allowedOrigins`, exposed as a getter so per-request reads still see hot-env updates). Cutover diagnostic at `scripts/verify-origin-config.ts`; cutover checklist in `SESSION_RECOVERY.md` § Custom-domain cutover.

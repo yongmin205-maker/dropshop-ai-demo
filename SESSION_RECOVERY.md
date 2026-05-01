@@ -52,3 +52,20 @@ Both are stored in the sandbox at `~/sensitive/creds-pilot1-dropshop.md` (chmod 
 - Prefer quality > cost; premium solutions over cheap ones.
 - Security review on every infra change; conservative on infrastructure assumptions.
 - Update this file and the Notion recovery page whenever something durable about the friend's stack, the deal terms, or strategic direction is learned.
+
+## Custom-domain cutover checklist (run BEFORE flipping DNS)
+
+The deploy currently rides the `originGuard` suffix fallback (`*.manus.space` / `*.manus.computer`, ADR 0003). The moment DNS moves to a custom domain — e.g. `app.visitdropshop.com` — every Approve mutation will 403 unless `ALLOWED_ORIGINS` has been set to that origin first. Run this checklist in order. Each step is verifiable.
+
+1. **Decide the canonical origin string.** Pick the exact `scheme://host[:port]` you'll bind, e.g. `https://app.visitdropshop.com`. No trailing slash. If you need to support staging plus prod, list both — `ALLOWED_ORIGINS` is comma-separated, exact-match per entry (`https://app.visitdropshop.com,https://staging.dropshop.ai`).
+2. **Set `ALLOWED_ORIGINS` via the Manus webdev secrets UI.** Save against the production environment. Do NOT push it through code — it's an env-only knob. The value is read at request time (getter on `ENV.allowedOrigins`), so a hot-env reload picks it up without a redeploy.
+3. **Deploy.** Same checkpoint, no code change required — the env-var change alone suffices.
+4. **Run the diagnostic against the live URL.** From a sandbox shell with the same env values:
+   ```bash
+   tsx scripts/verify-origin-config.ts
+   ```
+   Confirm the bottom line reads `READY FOR CUSTOM DOMAIN: yes` and the canonical origin probe shows `[ALLOW]`. If it shows `[DENY]` or "no", stop and fix the env value before flipping DNS.
+5. **Verify Approve from the new domain succeeds.** Using a logged-in Owner session bound to the new origin, click Approve on a draft. Expect 200, not 403. If it 403s, the most common causes are a trailing slash in `ALLOWED_ORIGINS`, a wrong scheme (`http://` vs `https://`), or a cookie scoped to the old domain.
+6. **Watch the logs for `[originGuard] fallback-used`.** The fallback warn fires ONLY when the suffix policy is approving requests. After the env is set correctly, those warnings should stop. If they keep coming, the env is being read as empty — `ALLOWED_ORIGINS` was applied to the wrong environment, or the deploy didn't pick it up.
+7. **Only THEN remove the old origin.** If you're keeping both `manus.space` and the custom domain live during a soft cutover, leave the manus.space entry in `ALLOWED_ORIGINS` until the friend has been on the custom domain end-to-end for a day. Once you're confident, drop the old origin and rerun step 4.
+8. **Update this file's § 4** if the architectural seam moved (e.g. custom-domain bound, ADR 0003 follow-up closed).
