@@ -419,3 +419,36 @@ Priority ordered by Claude Code's cutover-risk analysis. Order is load-bearing: 
 - [x] **21a** — Done via Claude Code `feat/21a-ubiquitous-language-in-prompt` (sha `9c98f7c`). Added exported `DROPSHOP_VOCABULARY` constant (~40 lines, 5 sections: Actors / Message lifecycle / Approval & escalation / Intent labels / Knowledge surface) + `buildSystemPrompt()` function. `BRAND_VOICE` tightened with "your order" phrasing rule, "we'll text" (not "I'll text") authority rule, and an explicit ground-or-escalate rule. Claude also proactively reordered the user-message parts so `<UNTRUSTED_INPUT>` now comes AFTER Tool data + RAG (defense-in-depth against prompt injection). 3 new regression tests pin: (i) every load-bearing glossary term appears verbatim in the prompt, (ii) vocabulary precedes brand voice, (iii) untrusted input follows trusted context. 38 files / 300 tests green.
 - [x] **21b** (sha `d8eff34`) — Centralized `ALLOWED_ORIGINS` read in `server/_core/env.ts` as a getter (so webdev hot-secret reload works without redeploy). New `scripts/verify-origin-config.ts` diagnostic prints effective policy + 3 example origin probes (Manus / candidate custom / look-alike attacker) + a `READY FOR CUSTOM DOMAIN: yes/no` line. New `SESSION_RECOVERY.md` § "Custom-domain cutover checklist" with 8 verifiable steps. ADR 0003 amended one-liner. 38 files / 300 tests. The diagnostic refused without ALLOWED_ORIGINS and flipped to `yes` when the env was simulated.
 - [x] **21c** — Audited every reader of `messages.status` and `messages.mode='simulator'`. Zero readers depend on the queued→sent transition: no UI surfaces status, no server-side filter excludes queued, no sweeper/cron walks queued rows. Two-phase send completes synchronously inside its initiating request, rolling back via `withTransaction` on failure. Attestation appended to ADR 0008. No code change required.
+
+## Phase 22 — Friend feedback response (queued May 1, 2026)
+
+Trigger: friend sent (a) Korean text feedback "make a simple/hide version, other apps have too much", (b) Aischedule.pdf with 3 salon pain points (slot fragmentation, payment failures, multi-stylist packages). User confirmed: design with mobile/native-app target in mind.
+
+### Track A — DropShop Simple Mode
+
+- [ ] **22a-1** — Add `[Simple] [Full]` toggle pill in `Home.tsx` header. Persist to `localStorage('dropshop:viewMode')`. Default = `Simple`.
+- [ ] **22a-2** — In Simple Mode hide: Demo Scenarios bar, Phone Simulator pane, AI Log tab, RAG Memory tab, Errors tab, embedding-degraded banner. Show: header, single-column StoreInbox + active conversation, ApprovalQueue inline below the conversation. Layout must collapse cleanly on mobile (375px target).
+- [ ] **22a-3** — Tests: Simple Mode hides RAG/AI Log/Errors triggers + toggle persists across mount + approve/reject still works in Simple Mode.
+
+### Track B — Salon Pilot 2 Smart-Slot suggestion (Problem 1)
+
+User confirmed: scoring prefers filling "gap before" first. User asked for ticketmaster-style hold/lock when proposing slots.
+
+- [ ] **22b-0** — Write `docs/mainstreet-ai/pilots/pilot2_salon/slot_hold_design.md` (lifecycle states, TTL choice, hold table schema, race conditions, expiry handling, demo countdown UX).
+- [ ] **22b-1** — DB: `salon_slot_holds` table (`id`, `stylistId`, `serviceId`, `startTs`, `endTs`, `customerId`, `expiresAt`, `status`).
+- [ ] **22b-2** — `salon.suggestOptimalSlots({serviceId, dayISO})` — scans 15-min starts, scores by `gap_before * 1.0 + gap_after * 0.6` (lower = better), filters out slots overlapping existing hold/booking, returns top 3.
+- [ ] **22b-3** — `salon.holdSlot({slotId, ttlSec})` and `salon.releaseHold({holdId})`. Hold auto-expires via `expiresAt` (no cron — checked at read time).
+- [ ] **22b-4** — Approve flow: confirm hold + commit appointment + release sibling holds, all in `withTransaction`.
+- [ ] **22b-5** — UI: Smart Slots panel. Customer texts "afternoon haircut?" → 3 ranked slots with countdown timers. Approving one auto-releases the others.
+- [ ] **22b-6** — Tests: scoring picks gap-filler over end-of-day, hold prevents double-book within TTL, hold auto-expires, sibling holds released on confirm.
+
+### Track B — Salon Pilot 2 Multi-stylist package (Problem 3)
+
+- [ ] **22c-1** — Extend `shared/salonScenarios.ts` with `package` type: ordered legs `[{service, stylist}]`.
+- [ ] **22c-2** — `salon.suggestPackageSlots({packageId, dayISO})` — finds windows where leg-1 stylist is free for leg-1 duration AND leg-2 stylist is free immediately after for leg-2 duration. Honors holds.
+- [ ] **22c-3** — Approval card: render both legs vertically. One Approve commits both legs in one transaction OR rejects with re-propose if conflicting hold/booking landed between propose and approve.
+- [ ] **22c-4** — Tests: skip windows where leg-2 stylist is busy, atomic approve commits both, post-propose conflict triggers re-propose path.
+
+### Track B — Payments (Problem 2) — DEFERRED to Phase 23
+
+Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "payment status" badge + retry CTA. Do not block 22a/22b/22c on this.
