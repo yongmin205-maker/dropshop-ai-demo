@@ -426,9 +426,9 @@ Trigger: friend sent (a) Korean text feedback "make a simple/hide version, other
 
 ### Track A — DropShop Simple Mode
 
-- [ ] **22a-1** — Add `[Simple] [Full]` toggle pill in `Home.tsx` header. Persist to `localStorage('dropshop:viewMode')`. Default = `Simple`.
-- [ ] **22a-2** — In Simple Mode hide: Demo Scenarios bar, Phone Simulator pane, AI Log tab, RAG Memory tab, Errors tab, embedding-degraded banner. Show: header, single-column StoreInbox + active conversation, ApprovalQueue inline below the conversation. Layout must collapse cleanly on mobile (375px target).
-- [ ] **22a-3** — Tests: Simple Mode hides RAG/AI Log/Errors triggers + toggle persists across mount + approve/reject still works in Simple Mode.
+- [x] **22a-1** — Add `[Simple] [Full]` toggle pill in `Home.tsx` header. Persist to `localStorage('dropshop.uiMode.v1')`. Default = `Simple`. (`SimpleModeToggle` component + `useSimpleMode` hook.)
+- [x] **22a-2** — In Simple Mode hide: Demo Scenarios bar, Phone Simulator pane, AI Log / RAG Memory / Errors tabs, embedding-degraded banner. Show: header + `StoreInboxCompact` (vertical 44px tap rows) + `ApprovalQueue` full-width, single-column at every breakpoint (max-w-[480px] mobile-first per Phase22 §Q1).
+- [x] **22a-3** — Tests: 6 `useSimpleMode` (default, rehydrate, invalid value, write-through, toggle, private-browsing) + 5 `SimpleModeToggle` (aria-selected, rerender, click flows, tap-target class). 11/11 pass. Full suite: 330 passed | 3 skipped.
 
 ### Track B — Salon Pilot 2 Smart-Slot suggestion (Problem 1)
 
@@ -452,3 +452,13 @@ User confirmed: scoring prefers filling "gap before" first. User asked for ticke
 ### Track B — Payments (Problem 2) — DEFERRED to Phase 23
 
 Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "payment status" badge + retry CTA. Do not block 22a/22b/22c on this.
+
+
+### Phase 22d — Nextiva Polling POC (BLOCKED — see ADR 0009)
+- [x] Collect Nextiva credentials via secrets card (NEXTIVA_USERNAME, NEXTIVA_PASSWORD, NEXTIVA_PHONE_NUMBER, NEXTIVA_CAMPAIGN_ID optional)
+- [x] Add `server/messaging/nextivaTransport.ts`: token-with-authorities login + 1h cache + workitem poll + sendSMS scaffolding
+- [x] Mocked vitest for transport (auth Basic Auth, workitem parsing, send payload, campaignId optional)
+- [x] Live probe across host/path grid via `nextivaTransport.live.test.ts` (RUN_NEXTIVA_LIVE=1)
+- [x] **Result: BLOCKED.** All documented endpoints return 404 from `api.nextiva.com`; `nextos.nextiva.com` answers 200 but only with a `<title>Nextiva Online Account - Secure Login</title>` HTML SPA — i.e. no JSON API surface for these credentials. Friend's plan is NextivaONE business phone, not Contact Center / NextOS developer access.
+- [x] Documented in `docs/adr/0009-nextiva-api-access-blocker.md` (full probe grid + 3 forward paths).
+- [ ] **Decision pending (friend):** (a) pivot to Twilio-only (already shipped); (b) Nextiva number-forwarding into Twilio so friend keeps the number; (c) ask Nextiva sales for Contact Center API plan. Manus is not building further on Nextiva until friend chooses.

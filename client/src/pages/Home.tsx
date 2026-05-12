@@ -41,6 +41,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVisiblePollInterval } from "@/hooks/useVisiblePollInterval";
+import { useSimpleMode } from "@/hooks/useSimpleMode";
+import { SimpleModeToggle } from "@/components/SimpleModeToggle";
 import { ApprovalQueue } from "./dropshop/ApprovalQueue";
 import { intentTone } from "./dropshop/intentTone";
 import { Link } from "wouter";
@@ -80,6 +82,9 @@ export default function Home() {
   // small information leak about the internals.
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  // Simple Mode toggle (Phase 22a). Default is "simple" per
+  // docs/PHASE22_DECISIONS.md §Q1; full layout stays one click away.
+  const { mode: uiMode, isSimple, setMode: setUiMode } = useSimpleMode();
   // Re-poll the live-mode / fallback config every 30s so the UI honestly
   // reflects toggles made server-side without forcing a hard reload.
   const config = trpc.config.get.useQuery(undefined, { refetchInterval: 30_000 });
@@ -186,6 +191,7 @@ export default function Home() {
               Switch to Salon
             </Link>
             <ResetDemoButton onReset={() => setActiveConvId(null)} />
+            <SimpleModeToggle mode={uiMode} onChange={setUiMode} />
             <Button variant="outline" size="sm" className="hidden sm:inline-flex bg-background border-border hover:bg-secondary text-foreground">
               <ArrowUpRight className="size-4 mr-1.5" />
               Pitch deck
@@ -196,8 +202,10 @@ export default function Home() {
 
       {/* Embedding-degraded banner. Honest disclosure when semantic RAG is
           running on the deterministic hash-bag fallback (Forge embedding
-          endpoint missing or has failed at least once this process). */}
-      {config.data?.embeddingFallback && (
+          endpoint missing or has failed at least once this process).
+          Hidden in Simple Mode — the friend's daily-use perspective doesn't
+          need to see infra-degradation notices. */}
+      {!isSimple && config.data?.embeddingFallback && (
         <div className="border-b border-amber-200 bg-amber-50 text-amber-900">
           <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 text-xs sm:text-sm flex items-start gap-2">
             <span className="mt-0.5">⚠</span>
@@ -211,8 +219,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Preset scenarios bar */}
-      <div className="border-b border-border bg-background">
+      {/* Preset scenarios bar. Hidden in Simple Mode — these are pitch /
+          demo affordances, not part of the operator's daily workflow. */}
+      {!isSimple && <div className="border-b border-border bg-background">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 overflow-x-auto no-scrollbar">
           <span className="text-xs text-muted-foreground uppercase tracking-widest shrink-0 mr-1">
             Demo scenarios
@@ -236,10 +245,41 @@ export default function Home() {
             </Button>
           ))}
         </div>
-      </div>
+      </div>}
 
-      {/* Split-screen workspace (desktop) */}
-      <main className="hidden lg:grid max-w-[1600px] mx-auto px-6 py-6 grid-cols-12 gap-7">
+      {/* Simple Mode: single vertical stack at every breakpoint. Designed
+          mobile-first per docs/PHASE22_DECISIONS.md §Q1 (target is iOS/Android
+          native app, not a desktop dashboard). Two regions only:
+          (1) what came in (inbox chips), (2) what to send next (approval). */}
+      {isSimple && (
+        <main className="max-w-[480px] mx-auto px-4 py-4 space-y-4">
+          <StoreInboxCompact
+            conversations={conversations.data ?? []}
+            activeId={activeConvId}
+            onSelect={setActiveConvId}
+          />
+          <ApprovalQueue
+            activeConversationId={activeConvId}
+            customerName={
+              conversations.data?.find((c) => c.id === activeConvId)?.customerName ?? null
+            }
+          />
+          {(escalations.data?.length ?? 0) > 0 && (
+            <EscalationsPanel
+              escalations={escalations.data ?? []}
+              onResolve={(id) => {
+                utils.client.escalations.resolve.mutate({ id }).then(() => {
+                  utils.escalations.list.invalidate();
+                  toast.success("Escalation resolved");
+                });
+              }}
+            />
+          )}
+        </main>
+      )}
+
+      {/* Split-screen workspace (desktop) — Full mode only. */}
+      {!isSimple && <main className="hidden lg:grid max-w-[1600px] mx-auto px-6 py-6 grid-cols-12 gap-7">
         {/* Left: Customer phone simulator */}
         <section className="col-span-3">
           <PhoneSimulator
@@ -317,10 +357,11 @@ export default function Home() {
             )}
           </Tabs>
         </section>
-      </main>
+      </main>}
 
-      {/* Mobile workspace (tabs) */}
-      <main className="lg:hidden max-w-[1600px] mx-auto px-3 py-4">
+      {/* Mobile workspace (tabs) — Full mode only. Simple mode handles its
+          own mobile-first single-column layout above. */}
+      {!isSimple && <main className="lg:hidden max-w-[1600px] mx-auto px-3 py-4">
         <Tabs defaultValue="simulator" className="w-full">
           <TabsList className="bg-background border border-border w-full grid grid-cols-4 shadow-sm">
             <TabsTrigger value="simulator" className="text-xs">Simulator</TabsTrigger>
@@ -376,7 +417,7 @@ export default function Home() {
             <RagMemoryPanel />
           </TabsContent>
         </Tabs>
-      </main>
+      </main>}
 
       {/* Footer */}
       <footer className="border-t border-border bg-background mt-8">
@@ -678,6 +719,94 @@ function StoreInbox({
             </p>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * StoreInboxCompact — the Simple-Mode inbox.
+ *
+ * Just a vertical list of recent conversations as full-width tap targets,
+ * sized for one-thumb operation on a 375 × 812 phone screen. Tapping a row
+ * selects that conversation so the ApprovalQueue card below it switches to
+ * that thread's pending draft.
+ *
+ * We intentionally do NOT render the message thread inline here — in Simple
+ * Mode the operator only needs to see (a) who's waiting and (b) what to
+ * send. If they want the full thread, they flip to Full mode.
+ */
+function StoreInboxCompact({
+  conversations,
+  activeId,
+  onSelect,
+}: {
+  conversations: { id: number; phone: string; customerName: string | null; lastIntent: string | null; escalated: number; updatedAt: Date }[];
+  activeId: number | null;
+  onSelect: (id: number) => void;
+}) {
+  const sorted = useMemo(
+    () => [...conversations].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)),
+    [conversations],
+  );
+  if (sorted.length === 0) {
+    return (
+      <Card className="panel">
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">
+          No customer messages yet.
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card className="panel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between font-display text-sm">
+          <span className="flex items-center gap-2">
+            <Building2 className="size-4 text-[var(--iris)]" />
+            Customers waiting
+          </span>
+          <span className="text-[10px] font-normal text-muted-foreground">
+            {sorted.length}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-2 pb-2">
+        <div className="divide-y divide-border">
+          {sorted.slice(0, 5).map((c) => {
+            const active = c.id === activeId;
+            return (
+              <button
+                key={c.id}
+                onClick={() => onSelect(c.id)}
+                className={`w-full min-h-[44px] px-2 py-2 flex items-center justify-between text-left transition-colors ${
+                  active
+                    ? "bg-[var(--iris-soft)]"
+                    : "hover:bg-secondary"
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium flex items-center gap-2">
+                    {c.customerName ?? c.phone}
+                    {c.escalated === 1 && (
+                      <AlertTriangle className="size-3 text-rose-600 shrink-0" />
+                    )}
+                  </div>
+                  {c.lastIntent && (
+                    <span
+                      className={`mt-1 inline-block text-[10px] px-1.5 py-0.5 rounded border ${intentTone(c.lastIntent)}`}
+                    >
+                      {c.lastIntent}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 ml-3">
+                  {format(new Date(c.updatedAt), "HH:mm")}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </CardContent>
     </Card>
   );
