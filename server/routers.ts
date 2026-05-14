@@ -1112,17 +1112,29 @@ export const appRouter = router({
         return out;
       }
       const today = new Date().toISOString().slice(0, 10);
-      const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
         .toISOString()
         .slice(0, 10);
-      // Run all 4 calls in parallel — they're independent. Rate limiter
-      // inside cleanCloudTransport will keep us under 3 req/sec.
-      const [pricelistsR, productsR, ordersR, customersR] = await Promise.all([
-        cleanCloud.getPriceLists(),
-        cleanCloud.getProducts({ sendUpcharges: 0 }),
-        cleanCloud.getOrders({ dateFrom: oneMonthAgo, dateTo: today }),
-        cleanCloud.getCustomer({ dateFrom: oneMonthAgo, dateTo: today }),
-      ]);
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      // Serialize the 4 calls. CleanCloud enforces a server-side throttle
+      // that treats bursts as one client; Promise.all here tripped
+      // "Rate Limit Exceeded" on the friend's account. The local rate
+      // limiter inside cleanCloudTransport already paces single-flight
+      // serial calls comfortably under 3 req/sec.
+      const pricelistsR = await cleanCloud.getPriceLists();
+      const productsR = await cleanCloud.getProducts({ sendUpcharges: 0 });
+      // Active stores can have hundreds of orders per week — narrow to 3
+      // days so the diagnostic always fits in one page.
+      const ordersR = await cleanCloud.getOrders({
+        dateFrom: threeDaysAgo,
+        dateTo: today,
+      });
+      const customersR = await cleanCloud.getCustomer({
+        dateFrom: sevenDaysAgo,
+        dateTo: today,
+      });
       if (pricelistsR.ok) {
         out.priceLists.ok = true;
         out.priceLists.count = pricelistsR.data.length;

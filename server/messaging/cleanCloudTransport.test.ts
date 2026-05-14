@@ -218,3 +218,90 @@ describe("cleanCloudTransport — rate limiting", () => {
     vi.useRealTimers();
   });
 });
+
+
+// ---------- Phase 23 follow-up: rate-limit auto-retry --------------------
+// CleanCloud's server-side throttle sometimes returns
+// `{ Success: "False", Error: "Rate Limit Exceeded. ..." }` even when our
+// local per-second gate is respected. The transport retries once after a
+// short pause; callers see ok=true on the second attempt with no awareness
+// of the throttle.
+
+import { __setCleanCloudRateLimitSleeperForTests } from "./cleanCloudTransport";
+
+describe("cleanCloudTransport — rate-limit auto-retry", () => {
+  beforeEach(() => {
+    __resetCleanCloudRateLimitForTests();
+    // Replace the real sleeper with an instant resolver so tests stay fast.
+    __setCleanCloudRateLimitSleeperForTests(() => Promise.resolve());
+  });
+
+  afterEach(() => {
+    __setCleanCloudRateLimitSleeperForTests(null);
+  });
+
+  it("retries once when first response is a throttle envelope, then succeeds", async () => {
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            Success: "False",
+            Error: "Rate Limit Exceeded. You are making too many requests per second.",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ Success: "True", PriceLists: [{ priceListID: 1, name: "Default" }] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const r = await getPriceLists({ fetchImpl });
+    expect(call).toBe(2);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.length).toBe(1);
+    }
+  });
+
+  it("gives up after the bounded number of retries and returns the throttle error", async () => {
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      return new Response(
+        JSON.stringify({
+          Success: "False",
+          Error: "Rate Limit Exceeded. You are making too many requests per second.",
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const r = await getPriceLists({ fetchImpl });
+    // 1 original + 1 retry = 2 calls.
+    expect(call).toBe(2);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/Rate Limit Exceeded/i);
+    }
+  });
+
+  it("does NOT retry on non-throttle errors", async () => {
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      return new Response(
+        JSON.stringify({ Success: "False", Error: "No Customer With That ID" }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const r = await getCustomer({ customerID: "999" }, { fetchImpl });
+    // Should fail fast with one call only.
+    expect(call).toBe(1);
+    expect(r.ok).toBe(false);
+  });
+});

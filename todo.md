@@ -475,3 +475,14 @@ Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "p
 - [ ] **23-7** — Small admin-only UI panel (or a one-off `/cleancloud-test` route) that renders the diagnostic samples as JSON for inspection.
 - [ ] **23-8** — Document the result in `docs/mainstreet-ai/integrations/cleancloud_stage1_result.md` (which fields actually came through, any surprises, recommended Stage-2 work).
 - [ ] **23-9** — Remind the user to regenerate the API token in CleanCloud admin after the integration is locked in (the value was shared in plaintext chat).
+
+
+## Phase 23 follow-ups (discovered during /cleancloud-test live diagnostic)
+
+- [x] **23f-1** — Diagnostic `getOrders` narrowed to a 3-day window (was 30 days). Active stores get "Requesting too many orders in one request" past ~7 days; 3 days fits in one page.
+- [x] **23f-2** — Diagnostic `Promise.all` replaced with sequential awaits in `cleancloud.diagnostic` router. CleanCloud's server-side throttle was treating concurrent fan-out as one client; serial calls pace comfortably under the published 3 req/sec cap.
+- [x] **23f-3** — `cleanCloudTransport.postJson` now auto-retries once after a 1.2s delay when the response body matches `/rate limit|too many requests/i`. Test seam `__setCleanCloudRateLimitSleeperForTests` lets vitest inject an instant resolver.
+- [x] **23f-4** — Vitest coverage for retry: (a) throttle→success on attempt 2, (b) throttle→throttle bounded to 2 calls then error surfaced, (c) non-throttle error fails fast (no retry). 16/16 cleancloud transport tests pass; full suite 360 passed | 8 skipped.
+- [ ] **23f-5** — Investigate CleanCloud product flags (`te1`/`te2`/`te3`, `isSqmProduct`, `type`, `section`) to derive a customer-visible whitelist — operational SKUs like "A_Personal Bag to Return" must NOT surface in agent quotes.
+- [ ] **23f-6** — B2B pickup scenario: the friend's account has 9 price lists keyed by building (985 Park Doorman, 1040 Park Ave, Inpir, Monthly Subscription, …). Add a demo scenario where a doorman texts "I have 3 bags from 1040" → agent recognizes building, applies that price list.
+- [ ] **23f-7** — Webhook endpoint scaffold (`/api/cleancloud/webhook`) with HMAC-style shared-secret verification — required before any of the 9 webhook toggles in CleanCloud admin can be safely turned on.

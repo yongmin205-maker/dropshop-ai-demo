@@ -35,6 +35,31 @@ import { ENV } from "../_core/env";
 const BASE = "https://cleancloudapp.com/api";
 const RATE_LIMIT_PER_SECOND = 3; // CleanCloud published cap (Grow+).
 const REQUEST_TIMEOUT_MS = 10_000;
+// Server-side throttle backoff: when CleanCloud returns its own "Rate Limit
+// Exceeded" message (distinct from our local per-second gate), retry once
+// after a short pause. The friend's account regularly emits this when a
+// burst arrives faster than CleanCloud's accounting accepts even within the
+// documented 3 req/sec cap, so a single retry recovers transparently.
+const RATE_LIMIT_RETRY_DELAY_MS = 1200;
+const RATE_LIMIT_MAX_RETRIES = 1;
+
+// Test seam: lets the rate-limit retry test inject a synchronous waiter
+// instead of waiting real wall time.
+let __rateLimitSleeper: (ms: number) => Promise<void> = (ms) =>
+  new Promise((r) => setTimeout(r, ms));
+export function __setCleanCloudRateLimitSleeperForTests(
+  fn: ((ms: number) => Promise<void>) | null,
+): void {
+  __rateLimitSleeper = fn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+}
+
+function isThrottleEnvelope(json: unknown): boolean {
+  if (!json || typeof json !== "object") return false;
+  const r = json as { Success?: unknown; Error?: unknown };
+  if (r.Success === "True") return false;
+  if (typeof r.Error !== "string") return false;
+  return /rate limit|too many requests/i.test(r.Error);
+}
 
 // ----- Public typed response shapes ----------------------------------------
 // CleanCloud's API documentation only lists request parameters, not the
@@ -163,7 +188,7 @@ export function __resetCleanCloudRateLimitForTests(): void {
 
 // ----- Low-level POST helper -----------------------------------------------
 
-async function postJson(
+async function postJsonOnce(
   endpoint: string,
   payload: Record<string, unknown>,
   opts: { fetchImpl?: typeof fetch; tokenOverride?: string } = {},
@@ -198,6 +223,20 @@ async function postJson(
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function postJson(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  opts: { fetchImpl?: typeof fetch; tokenOverride?: string } = {},
+): Promise<{ status: number; bodyText: string; json: unknown }> {
+  let last = await postJsonOnce(endpoint, payload, opts);
+  for (let attempt = 0; attempt < RATE_LIMIT_MAX_RETRIES; attempt++) {
+    if (!isThrottleEnvelope(last.json)) break;
+    await __rateLimitSleeper(RATE_LIMIT_RETRY_DELAY_MS);
+    last = await postJsonOnce(endpoint, payload, opts);
+  }
+  return last;
 }
 
 function decodeEnvelope<T>(
