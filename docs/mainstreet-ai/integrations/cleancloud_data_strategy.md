@@ -13,7 +13,7 @@
 
 > CleanCloud의 43개 endpoint 중 **현재 DropShop이 실질적으로 쓰는 것은 4개**(`getCustomer`, `getOrders`, `getProducts`, `getPriceLists`)이며, 그나마도 *직접 호출만 하고 어디에도 저장하지 않음*. Owner Assistant("최근 2주 단골 동향" 같은 자연어 질문에 답하는 LLM agent)를 만들려면, 적어도 `orders`/`customers`/`payments` 세 덩어리는 **반드시 우리 DB로 mirror**해야 한다. 이유는 세 가지: (a) CleanCloud는 분석용 쿼리 API를 제공하지 않음 (단일-주문/단일-고객 lookup 위주), (b) rate limit (월 50K req, 초당 3 req) 안에서 시계열 집계는 불가능, (c) 데이터를 우리 쪽에 둬야 SQL/벡터 검색/외부 데이터 join이 가능해진다. CleanCloud는 매장 운영의 **source of truth**로 유지하되, 우리는 그 위에 **read-only analytical replica**를 쌓는다.
 >
-> **P0 출시 단계는 daily pull 2회 (11:00 + 22:00) 만으로 시작**한다 (webhook은 의도적으로 도입 안 함 — 자세히는 [pipeline.md §1](./cleancloud_pipeline.md)). 그리고 우리가 결국 자체 POS를 만들 것이므로, mirror 테이블 이름을 vendor-neutral하게 (`customers`/`orders`/`payments`/`products`) 짓고 vendor-specific ID는 별도 `external_refs` 테이블로 분리한다. 이렇게 하면 미래 DropShop POS로 갈아탈 때 schema 변경 0줄로 가능.
+> **P0 출시 단계는 daily pull 1회 (03:00 America/New_York) 만으로 시작**한다 (webhook은 의도적으로 도입 안 함 — 자세히는 [pipeline.md §1](./cleancloud_pipeline.md)). 그리고 우리가 결국 자체 POS를 만들 것이므로, mirror 테이블 이름을 vendor-neutral하게 (`customers`/`orders`/`payments`/`products`) 짓고 vendor-specific ID는 별도 `external_refs` 테이블로 분리한다. 이렇게 하면 미래 DropShop POS로 갈아탈 때 schema 변경 0줄로 가능.
 
 ---
 
@@ -163,14 +163,14 @@ P0 schema는 vendor-neutral하게 설계. CleanCloud는 첫 source, DropShop POS
 
 | 테이블 | source endpoint (현재 vendor=cleancloud) | 갱신 트리거 (Stage 0) | 핵심 컬럼 |
 |---|---|---|---|
-| `customers` | `getCustomer` (updatedSecondsAgoFrom=12h) | daily pull 11:00 + 22:00 | `id PK (internal UUID)`, `source`, 위 §2.1 ✅ 필드, `raw_payload JSON`, `synced_at` |
-| `orders` | `getOrders` (dateFrom=12h ago) | daily pull 11:00 + 22:00 | `id PK`, `source`, `customer_id FK`, 위 §2.2 ✅ 필드, `raw_payload JSON` |
-| `payments` | `getPayments` (dateFrom=12h ago) | daily pull 11:00 + 22:00 | `id PK`, `source`, `order_id FK`, `amount_cents`, `type`, `paid_at`, `refunded` |
-| `products` | `getProducts` / `getPriceLists` (전체) | daily pull 22:00 only | `id PK`, `source`, `price_list_id`, `name`, `price_cents`, `category` |
+| `customers` | `getCustomer` (updatedSecondsAgoFrom=86400) | daily pull 03:00 ET | `id PK (internal UUID)`, `source`, 위 §2.1 ✅ 필드, `raw_payload JSON`, `synced_at` |
+| `orders` | `getOrders` (dateFrom=28h ago) | daily pull 03:00 ET | `id PK`, `source`, `customer_id FK`, 위 §2.2 ✅ 필드, `raw_payload JSON` |
+| `payments` | `getPayments` (dateFrom=28h ago) | daily pull 03:00 ET | `id PK`, `source`, `order_id FK`, `amount_cents`, `type`, `paid_at`, `refunded` |
+| `products` | `getProducts` / `getPriceLists` (전체) | daily pull 03:00 ET | `id PK`, `source`, `price_list_id`, `name`, `price_cents`, `category` |
 | **`external_refs`** (매핑) | — | upsert 시마다 | `entity_type`, `source`, `external_id`, `internal_id` (Customer/Order/Payment/Product ID 매핑) |
-| **`sync_log`** (메타) | — | 모든 pull 작업 | `id PK`, `source`, `trigger` (`daily_pull_11am`/`daily_pull_10pm`/`backfill`), `endpoint`, `started_at`, `finished_at`, `rows_synced`, `error` |
+| **`sync_log`** (메타) | — | 모든 pull 작업 | `id PK`, `source`, `trigger` (`daily_pull_03am_et`/`backfill`/`manual`), `endpoint`, `started_at`, `finished_at`, `rows_synced`, `error` |
 
-`sync_log`가 별도 있어야 하는 이유: Owner Assistant가 "이 답변 얼마나 fresh해?"라고 답할 수 있어야 함. "데이터는 오늘 22:00 pull 기준" 같은 정직한 freshness 메타 표시 가능.
+`sync_log`가 별도 있어야 하는 이유: Owner Assistant가 "이 답변 얼마나 fresh해?"라고 답할 수 있어야 함. "데이터는 오늘 03:00 ET pull 기준" 같은 정직한 freshness 메타 표시 가능.
 
 `external_refs`가 별도 있어야 하는 이유: 우리가 자체 POS를 만들 때 같은 fact 테이블을 두 vendor가 공유. 표준 SQL을 그대로 쓰면서 vendor mapping만 분리.
 
@@ -195,13 +195,11 @@ P0 schema는 vendor-neutral하게 설계. CleanCloud는 첫 source, DropShop POS
 
 ## 7. Open questions — 친구한테 한 번에 모아 물어볼 것
 
-1. CleanCloud admin → Settings 어디엔가 **data retention 설정** 또는 표시 페이지가 있는지? 있으면 캡쳐.
-2. 매장에서 **CleanCloud 모바일 앱**을 손님들에게 권장하는가? (메시지/푸시/사진 채널 활성 여부 결정)
-3. **B2B 비즈니스 계정**을 운영하는가? (호텔, 식당, 미용실 정기 거래처) — 있다면 `getBusinessAccounts` mirror 필요.
-4. **Locker 서비스** 운영하는가? — 안 하면 locker 관련 필드 분석 제외.
-5. **매장 timezone** 확인 (LA? NYC? 다른 곳?) — daily pull 시간 (11:00, 22:00)이 정확히 매장 한산 시간에 맞춰야 함. 미국 외 매장이라면 시간 조정 필요.
+1. CleanCloud admin → Settings 어디엔가 **data retention 설정** 또는 표시 페이지가 있는지? 있으면 스크린샷.
+2. **B2B 비즈니스 계정**을 운영하는가? (호텔, 식당, 미용실 정기 거래처) — 있다면 `getBusinessAccounts` mirror 필요.
+3. **Locker 서비스** 운영하는가? — 안 하면 locker 관련 필드 분석 제외.
 
-*(원래 5번이었던 "활성화된 webhook 8개 캡쳐"는 Stage 0에선 불필요. Stage 1 도입 결정 시점에 다시 요청.)*
+*(timezone=NYC, 앱=태블릿 POS 전용 이 둘은 2026-05-14 사용자 응답으로 확정. 원래 있던 "활성화된 webhook 8개 캡쳐"는 Stage 0에선 불필요 — Stage 1 도입 결정 시점에 다시 요청.)*
 
 ---
 

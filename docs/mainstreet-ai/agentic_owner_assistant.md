@@ -3,7 +3,7 @@
 작성일: 2026-05-14 (rev 2 — Stage 0 daily-pull freshness + vendor-neutral schema)
 선행 문서:
 - [`integrations/cleancloud_data_strategy.md`](./integrations/cleancloud_data_strategy.md) — 무엇을 mirror할지
-- [`integrations/cleancloud_pipeline.md`](./integrations/cleancloud_pipeline.md) — 어떻게 mirror할지 (Stage 0: daily pull 2회, vendor-neutral schema)
+- [`integrations/cleancloud_pipeline.md`](./integrations/cleancloud_pipeline.md) — 어떻게 mirror할지 (Stage 0: daily pull 1회 — 03:00 America/New_York, vendor-neutral schema)
 
 이 문서가 다루는 것: 그 mirror 위에서 점주(친구 1명)가 자연어로 묻는 질문에 LLM이 어떻게 답할 것인가.
 
@@ -11,12 +11,11 @@
 
 ## 0. TL;DR
 
-> 옵션 3개 (순수 RAG · text-to-SQL · function-calling agent) 중 **function-calling agent**를 P0로 채택한다. 이유는 단순함이다 — 점주의 질문이 (1) 사실 lookup, (2) 시계열 집계, (3) 비교/원인 분석, (4) 액션(메시지 송신/픽업 변경) 4가지로 깔끔하게 갈리고, 각각이 *예측 가능한 SQL 패턴*에 매핑된다. 우리가 사전 정의한 ~12개의 tool (각자가 정형화된 SQL 또는 API call)을 LLM이 골라서 호출하게 하면, **text-to-SQL의 hallucination 위험 없이** 90% 질문을 커버한다. RAG는 `customerNotes`/`orderNotes` 같은 자유 텍스트 검색 보조 tool로만 사용. Latency는 점주가 "오래 걸려도 됨"이라 했으니 multi-step reasoning에 30–60초 허용. 모든 답변은 *데이터 freshness 메타*를 함께 출력 — Stage 0에서는 "data as of last pull at HH:MM today" 형식. 실시간 필요 lookup ("방금 주문 #4521 결제됨?")은 mirror 우회해서 on-demand CleanCloud API를 직접 치는 별도 fast-path tool로 처리.
+> 옵션 3개 (순수 RAG · text-to-SQL · function-calling agent) 중 **function-calling agent**를 P0로 채택한다. 이유는 단순함이다 — 점주의 질문이 (1) 사실 lookup, (2) 시계열 집계, (3) 비교/원인 분석, (4) 액션(메시지 송신/픽업 변경) 4가지로 깔끔하게 갈리고, 각각이 *예측 가능한 SQL 패턴*에 매핑된다. 우리가 사전 정의한 ~12개의 tool (각자가 정형화된 SQL 또는 API call)을 LLM이 골라서 호출하게 하면, **text-to-SQL의 hallucination 위험 없이** 90% 질문을 커버한다. RAG는 `customerNotes`/`orderNotes` 같은 자유 텍스트 검색 보조 tool로만 사용. Latency는 점주가 "오래 걸려도 됨"이라 했으니 multi-step reasoning에 30–60초 허용. 모든 답변은 *데이터 freshness 메타*를 함께 출력 — Stage 0에서는 "data as of today's 03:00 ET pull" 형식. **오늘 데이터는 mirror에 아직 없음** — "오늘 오전 매출?" 또는 "방금 주문 #4521 결제됨?" 같은 질문은 모두 mirror 우회해서 on-demand CleanCloud API를 직접 치는 fast-path tool로 처리하고 "방금 확인한 실시간 데이터"로 명시적으로 표시.
 
 ---
 
 ## 1. 점주가 물어볼 질문 — 5개 카테고리
-
 실제로 친구 같은 동네 드라이클리닝 점주가 던질 질문을 1주일치 일과 기준으로 패턴 분석한 결과.
 
 ### 카테고리 1 — 단순 사실 lookup ("이 손님 누구?")
@@ -29,7 +28,7 @@
 - "오더 #4521 결제 됐어?"
 - "지금 매장에 옷 몇 벌 있어?" (status=cleaning OR ready)
 
-**Tool 매핑**: 단일 SQL SELECT 하나 + WHERE 절. 거의 LLM 추론 없음. **주의**: 카테고리 1 질문 중 일부는 ("지금 매장에 옷 몇 벌?", "방금 주문 #4521 결제됨?") 실시간 상태가 중요 → mirror 우회해서 on-demand CleanCloud API 호출 (fast-path tool: `fetchLiveOrder` / `countActiveGarments`). Stage 0의 12h 지연이 답변을 틀리게 만들 수 있는 질문은 무조건 fast-path.
+**Tool 매핑**: 단일 SQL SELECT 하나 + WHERE 절. 거의 LLM 추론 없음. **주의**: Stage 0의 mirror는 *어제까지*의 진실만 담고 있음. 따라서 다음 점주 질문들은 무조건 fast-path tool로 on-demand CleanCloud API를 치고 mirror는 우회: "지금 매장에 옷 몇 벌?" (`countActiveGarments`), "방금 주문 #4521 결제됨?" (`fetchLiveOrder`), "오늘 오전 매출?" (`aggregateRevenueLive`). 이 fast-path tool들은 응답에 명시적으로 "방금 확인한 실시간 데이터" 메타를 붙임.
 
 ### 카테고리 2 — 시계열 집계 ("최근 N일 매출")
 
@@ -145,6 +144,7 @@ LLM이 schema 보고 SQL 직접 작성 → 실행 → 결과 합성.
 | `getActiveOrdersByStatus` | 1 | `status[]` | `count + orders[]` (mirror) |
 | `fetchLiveOrder` | 1 (fast-path) | `orderId` | `order` (on-demand CleanCloud API, bypass mirror) |
 | `countActiveGarments` | 1 (fast-path) | — | `count` (live API for status=cleaning/ready) |
+| `aggregateRevenueLive` | 2 (fast-path) | `dateFrom=00:00 today` | `revenueCents + orderCount` (live API for today-so-far queries) |
 | `aggregateRevenue` | 2 | `dateFrom, dateTo, groupBy=day\|week\|month\|dayOfWeek` | `series[]` |
 | `aggregateNewCustomers` | 2 | `dateFrom, dateTo, groupBy` | `series[]` |
 | `aggregateRepeatCustomers` | 2 | `dateFrom, dateTo, minVisits=3, lookbackDays=90` | `count + customers[]` |
