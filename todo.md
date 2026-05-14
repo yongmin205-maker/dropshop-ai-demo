@@ -530,3 +530,15 @@ Deliverables (docs first, code later):
 - [x] 24b · `docs/mainstreet-ai/integrations/cleancloud_pipeline.md`
 - [x] 24c · `docs/mainstreet-ai/agentic_owner_assistant.md`
 - [x] 24d · Hand to user for review → Phase 25 build plan awaits user go-ahead
+
+
+## Phase 24-rev (2026-05-14) — daily pull + POS migration redesign
+
+User direction: "지금으로썬 daily pull하는게어때? ... 영업 종료 후 한번, 중간에 한번 ... POS만들꺼라서 나중에 Data migration을 할것도 염두해야해."
+
+- [x] 24b-rev · Update `cleancloud_pipeline.md` — insert Stage 0 (daily pull 2x/day, no webhooks) before existing Stage 1; recommend Stage 0 as P0 launch; explain when to graduate to webhook stage and what triggers it
+- [x] 24b-rev · Add new section "POS-future-proof schema" — rename `cc_*` tables to vendor-neutral names (`customers`, `orders`, `payments`, `products`), introduce `external_refs` mapping table, document migration path (CleanCloud adapter → DropShop POS adapter)
+- [x] 24a-rev · Update `cleancloud_data_strategy.md` — adjust §5 mirror-target table names, add cross-reference to vendor-neutral schema, drop "webhook is P0" framing from §1 TL;DR
+- [x] 24c-rev · Update `agentic_owner_assistant.md` — tool catalog references must use neutral table names; add freshness-display nuance ("as of last pull at HH:MM" instead of "N minutes ago")
+- [x] 24-rev · Refresh "questions for friend" list — remove "activate webhooks" + "confirm 8 webhook names"; keep retention page screenshot, B2B, locker, mobile-app usage
+- [x] 24-rev · Checkpoint + send updated doc bundle to user
