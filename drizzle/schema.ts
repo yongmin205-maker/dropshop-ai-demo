@@ -372,3 +372,309 @@ export const cleanCloudWebhookEvents = mysqlTable("cleanCloudWebhookEvents", {
 }));
 export type CleanCloudWebhookEvent = typeof cleanCloudWebhookEvents.$inferSelect;
 export type InsertCleanCloudWebhookEvent = typeof cleanCloudWebhookEvents.$inferInsert;
+
+
+/* ============================================================
+ * Phase 25a — Vendor-neutral mirror schema
+ *
+ * Stage 0 strategy: a single nightly pull at 03:00 America/New_York fetches
+ * recent CleanCloud data (customers/orders/payments/products) and upserts
+ * into the tables below. The schema is intentionally **vendor-neutral** so
+ * that when DropShop ships its own POS later, it lands in the same
+ * `customers`/`orders`/`payments`/`products` tables with `source =
+ * "dropshop_pos"` and the analytics/Owner-Assistant layer above keeps
+ * working unchanged. CleanCloud-specific keys live in `external_refs`.
+ *
+ * Naming convention to avoid collision with the demo's existing
+ * `mockCustomers`/`mockOrders` (which model the CleanCloud-replacement POS
+ * during the demo) and the legacy auth `users` table:
+ *
+ *   posCustomers / posOrders / posPayments / posProducts
+ *
+ * The vendor-neutral product names map to `customers`/`orders`/... at the
+ * application/Owner-Assistant layer; the `pos` prefix is purely a SQL-level
+ * disambiguation, not an architectural distinction.
+ *
+ * Detailed reasoning: docs/mainstreet-ai/integrations/cleancloud_data_strategy.md
+ * Detailed schema discussion: docs/mainstreet-ai/integrations/cleancloud_pipeline.md
+ * ============================================================ */
+
+/** Source POS systems we mirror from. CleanCloud today, DropShop POS later. */
+export const POS_SOURCES = ["cleancloud", "dropshop_pos"] as const;
+export type PosSource = (typeof POS_SOURCES)[number];
+
+/**
+ * Normalized order status. CleanCloud's int statuses map here via
+ * server/integrations/cleancloud/statusMap.ts. Future POS sources map
+ * their own statuses into the same enum. The Owner Assistant + UI only
+ * ever sees these values.
+ */
+export const POS_ORDER_STATUSES = [
+  "received",     // Order created, not yet processed
+  "cleaning",     // In wash/dryclean cycle
+  "ready",        // Ready for pickup
+  "out_for_delivery",
+  "picked_up",    // Customer collected
+  "completed",    // Settled + closed
+  "cancelled",
+  "unknown",      // Source returned a status we don't recognize yet
+] as const;
+export type PosOrderStatus = (typeof POS_ORDER_STATUSES)[number];
+
+/** Normalized payment type — kept coarse on purpose so it survives schema drift. */
+export const POS_PAYMENT_TYPES = [
+  "cash",
+  "card",
+  "credit",        // store credit applied at checkout
+  "stripe",
+  "square",
+  "loyalty_points",
+  "other",
+  "unknown",
+] as const;
+export type PosPaymentType = (typeof POS_PAYMENT_TYPES)[number];
+
+/* ----- Mirrored entities ----- */
+
+/**
+ * Customer mirror. One row per (source, externalId).
+ *
+ * Why we store both `phoneE164` (normalized) and `phoneRaw` (as the source
+ * gave it): the normalized form is for DB joins/lookups; the raw form is
+ * for display + debugging when CleanCloud's input wasn't a valid US number
+ * (e.g. test rows with "555-XXXX"). Owner Assistant should query phoneE164.
+ */
+export const posCustomers = mysqlTable(
+  "posCustomers",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    source: mysqlEnum("source", POS_SOURCES).notNull(),
+    externalId: varchar("externalId", { length: 64 }).notNull(),
+    name: varchar("name", { length: 256 }),
+    phoneE164: varchar("phoneE164", { length: 32 }),
+    phoneRaw: varchar("phoneRaw", { length: 64 }),
+    email: varchar("email", { length: 320 }),
+    address: text("address"),
+    notes: text("notes"),
+    marketingOptIn: int("marketingOptIn").default(0).notNull(), // 0/1
+    loyaltyPoints: int("loyaltyPoints").default(0).notNull(),
+    creditCents: int("creditCents").default(0).notNull(),
+    /** Verbatim source payload — JSON. Lets us re-derive any field later
+     *  without a backfill. */
+    rawPayload: json("rawPayload"),
+    /** When this row was last refreshed from the source (UTC). */
+    syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (t) => ({
+    sourceExternalUnique: uniqueIndex("posCustomers_source_external_unique").on(
+      t.source,
+      t.externalId,
+    ),
+  }),
+);
+export type PosCustomer = typeof posCustomers.$inferSelect;
+export type InsertPosCustomer = typeof posCustomers.$inferInsert;
+
+/**
+ * Order mirror. One row per (source, externalId).
+ *
+ * `customerExternalId` is denormalized (we store the source's customer id
+ * directly, not the FK to posCustomers.id) so that a missing customer pull
+ * doesn't block the order pull. Joining at query time is via
+ * (source, externalId) on both tables.
+ */
+export const posOrders = mysqlTable(
+  "posOrders",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    source: mysqlEnum("source", POS_SOURCES).notNull(),
+    externalId: varchar("externalId", { length: 64 }).notNull(),
+    customerExternalId: varchar("customerExternalId", { length: 64 }),
+    status: mysqlEnum("status", POS_ORDER_STATUSES).notNull(),
+    /** Verbatim source status (e.g. CleanCloud's "0", "1", "4", "5") for
+     *  debugging schema drift. */
+    sourceStatusRaw: varchar("sourceStatusRaw", { length: 32 }),
+    finalTotalCents: int("finalTotalCents").default(0).notNull(),
+    paid: int("paid").default(0).notNull(), // 0/1
+    completed: int("completed").default(0).notNull(), // 0/1
+    express: int("express").default(0).notNull(), // 0/1
+    /** UTC timestamp of when the order was placed at the source. */
+    placedAt: timestamp("placedAt"),
+    /** Pickup/delivery scheduled window — UTC. */
+    pickupAt: timestamp("pickupAt"),
+    deliveryAt: timestamp("deliveryAt"),
+    notes: text("notes"),
+    /** Order-level item summary, denormalized for cheap reads. JSON array. */
+    itemsSummary: json("itemsSummary"),
+    rawPayload: json("rawPayload"),
+    syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (t) => ({
+    sourceExternalUnique: uniqueIndex("posOrders_source_external_unique").on(
+      t.source,
+      t.externalId,
+    ),
+  }),
+);
+export type PosOrder = typeof posOrders.$inferSelect;
+export type InsertPosOrder = typeof posOrders.$inferInsert;
+
+/**
+ * Payment mirror. One row per (source, externalId).
+ *
+ * Stage 0 note: CleanCloud's getPayments endpoint isn't always called —
+ * payments are also embedded inside the getOrders payload. The pull job
+ * extracts inline payments from order.payments[] when present; the
+ * dedicated getPayments call is reserved for Stage 1.
+ */
+export const posPayments = mysqlTable(
+  "posPayments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    source: mysqlEnum("source", POS_SOURCES).notNull(),
+    externalId: varchar("externalId", { length: 64 }).notNull(),
+    orderExternalId: varchar("orderExternalId", { length: 64 }),
+    customerExternalId: varchar("customerExternalId", { length: 64 }),
+    amountCents: int("amountCents").notNull(),
+    type: mysqlEnum("type", POS_PAYMENT_TYPES).default("unknown").notNull(),
+    sourceTypeRaw: varchar("sourceTypeRaw", { length: 32 }),
+    refunded: int("refunded").default(0).notNull(), // 0/1
+    paidAt: timestamp("paidAt"),
+    rawPayload: json("rawPayload"),
+    syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceExternalUnique: uniqueIndex("posPayments_source_external_unique").on(
+      t.source,
+      t.externalId,
+    ),
+  }),
+);
+export type PosPayment = typeof posPayments.$inferSelect;
+export type InsertPosPayment = typeof posPayments.$inferInsert;
+
+/**
+ * Product mirror — full snapshot replaced on each pull (not delta).
+ * `priceListExternalId` denotes the price-list scope (CleanCloud supports
+ * multiple lists for tiered pricing).
+ */
+export const posProducts = mysqlTable(
+  "posProducts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    source: mysqlEnum("source", POS_SOURCES).notNull(),
+    externalId: varchar("externalId", { length: 64 }).notNull(),
+    priceListExternalId: varchar("priceListExternalId", { length: 64 }),
+    name: varchar("name", { length: 256 }).notNull(),
+    category: varchar("category", { length: 128 }),
+    priceCents: int("priceCents").default(0).notNull(),
+    parentExternalId: varchar("parentExternalId", { length: 64 }),
+    rawPayload: json("rawPayload"),
+    syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceExternalUnique: uniqueIndex("posProducts_source_external_unique").on(
+      t.source,
+      t.externalId,
+    ),
+  }),
+);
+export type PosProduct = typeof posProducts.$inferSelect;
+export type InsertPosProduct = typeof posProducts.$inferInsert;
+
+/**
+ * Cross-vendor entity reference table. Lets the Owner Assistant ask
+ * "what's the CleanCloud customerID for our internal customer #42?" and
+ * future-proofs the migration from CleanCloud → DropShop POS.
+ *
+ * For Stage 0 we *also* keep the (source, externalId) unique index on
+ * each pos* table itself — this table is additive, not the only mapping.
+ */
+export const posExternalRefs = mysqlTable(
+  "posExternalRefs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    entityType: mysqlEnum("entityType", [
+      "customer",
+      "order",
+      "payment",
+      "product",
+    ]).notNull(),
+    source: mysqlEnum("source", POS_SOURCES).notNull(),
+    externalId: varchar("externalId", { length: 64 }).notNull(),
+    /** FK into the corresponding pos* table (posCustomers.id, etc).
+     *  Not a SQL FK — Drizzle MySQL doesn't enforce them by default. */
+    internalId: int("internalId").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    typeSourceExternalUnique: uniqueIndex(
+      "posExternalRefs_type_source_external_unique",
+    ).on(t.entityType, t.source, t.externalId),
+  }),
+);
+export type PosExternalRef = typeof posExternalRefs.$inferSelect;
+export type InsertPosExternalRef = typeof posExternalRefs.$inferInsert;
+
+/**
+ * Sync log — one row per pull invocation per endpoint. Owner Assistant
+ * reads the latest finished row to answer "how fresh is this data?".
+ */
+export const POS_SYNC_TRIGGERS = [
+  "daily_pull_03am_et",
+  "manual",
+  "backfill",
+  "webhook",         // reserved for Stage 1
+] as const;
+export type PosSyncTrigger = (typeof POS_SYNC_TRIGGERS)[number];
+
+export const posSyncLog = mysqlTable("posSyncLog", {
+  id: int("id").autoincrement().primaryKey(),
+  source: mysqlEnum("source", POS_SOURCES).notNull(),
+  trigger: mysqlEnum("trigger", POS_SYNC_TRIGGERS).notNull(),
+  endpoint: varchar("endpoint", { length: 64 }).notNull(),
+  /** UTC. Time window the pull was responsible for (inclusive both ends). */
+  windowFrom: timestamp("windowFrom"),
+  windowTo: timestamp("windowTo"),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt"),
+  rowsFetched: int("rowsFetched").default(0).notNull(),
+  rowsUpserted: int("rowsUpserted").default(0).notNull(),
+  rowsFailed: int("rowsFailed").default(0).notNull(),
+  /** When non-null, the pull ended in error. Owner Assistant surfaces these. */
+  error: text("error"),
+});
+export type PosSyncLog = typeof posSyncLog.$inferSelect;
+export type InsertPosSyncLog = typeof posSyncLog.$inferInsert;
+
+/**
+ * Product-change diff log. Each daily pull compares the new product
+ * snapshot against the previous one and writes a row per added/removed/
+ * price-changed product. Useful for the Owner Assistant question
+ * "did our drop-off prices change last month?".
+ */
+export const POS_PRODUCT_CHANGE_KINDS = ["added", "removed", "price_changed"] as const;
+export type PosProductChangeKind = (typeof POS_PRODUCT_CHANGE_KINDS)[number];
+
+export const posProductChanges = mysqlTable("posProductChanges", {
+  id: int("id").autoincrement().primaryKey(),
+  source: mysqlEnum("source", POS_SOURCES).notNull(),
+  externalId: varchar("externalId", { length: 64 }).notNull(),
+  kind: mysqlEnum("kind", POS_PRODUCT_CHANGE_KINDS).notNull(),
+  /** Cents. Nullable because added/removed have no "old" price. */
+  oldPriceCents: int("oldPriceCents"),
+  newPriceCents: int("newPriceCents"),
+  /** Snapshot of name at change time so we can render a human label
+   *  even if the product is later removed. */
+  productName: varchar("productName", { length: 256 }),
+  /** FK into posSyncLog.id of the pull that detected the change. */
+  syncLogId: int("syncLogId").notNull(),
+  detectedAt: timestamp("detectedAt").defaultNow().notNull(),
+});
+export type PosProductChange = typeof posProductChanges.$inferSelect;
+export type InsertPosProductChange = typeof posProductChanges.$inferInsert;

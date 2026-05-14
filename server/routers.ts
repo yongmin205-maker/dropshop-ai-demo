@@ -5,6 +5,12 @@ import { draftAgentReply, INTENT_LABELS, type Intent } from "./aiAgent";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+import { runDailyPull } from "./integrations/cleancloud/pullJob";
+import { runBackfill } from "./integrations/cleancloud/backfill";
+import {
+  recentSyncLogs,
+  latestSyncLogForEndpoint,
+} from "./integrations/cleancloud/db";
 import {
   appendMessage,
   appendMessageTx,
@@ -1171,6 +1177,54 @@ export const appRouter = router({
         out.customers.error = customersR.error;
       }
       return out;
+    }),
+  }),
+
+  /* ---------- Phase 25a: vendor-neutral mirror admin controls ---------- */
+  posMirror: router({
+    /**
+     * Manually trigger today's pull NOW (instead of waiting for the 03:00 ET
+     * cron). Returns the same per-endpoint summary as the cron does. Idempotent
+     * because every upsert is keyed on (source, externalId).
+     */
+    runDailyPullNow: adminProcedure.mutation(async () => {
+      const summary = await runDailyPull("manual");
+      return summary;
+    }),
+    /**
+     * One-time historical backfill (default 12 months). Walks orders
+     * month-by-month so a single bad month doesn't poison the entire job.
+     */
+    runBackfill: adminProcedure
+      .input(
+        z.object({
+          monthsBack: z.number().int().min(1).max(36).default(12),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const summary = await runBackfill(input.monthsBack);
+        return summary;
+      }),
+    /**
+     * Sync status for the admin dashboard. Returns the latest run for each
+     * endpoint plus a recent history feed. Owner Assistant calls this to
+     * answer "how fresh is this data?".
+     */
+    syncStatus: adminProcedure.query(async () => {
+      const [customers, orders, products, history] = await Promise.all([
+        latestSyncLogForEndpoint("cleancloud", "getCustomer"),
+        latestSyncLogForEndpoint("cleancloud", "getOrders"),
+        latestSyncLogForEndpoint("cleancloud", "getProducts"),
+        recentSyncLogs("cleancloud", 20),
+      ]);
+      return {
+        latestByEndpoint: {
+          customers,
+          orders,
+          products,
+        },
+        recent: history,
+      };
     }),
   }),
 });
