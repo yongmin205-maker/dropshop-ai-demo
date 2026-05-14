@@ -36,4 +36,10 @@ export const ENV = {
   get useRealPos(): boolean {
     return process.env.DROPSHOP_USE_REAL_POS === "1";
   },
+  // Shared secret CleanCloud passes back as `?token=...` on every webhook
+  // POST. Compared constant-time inside `/api/cleancloud/webhook`. Dynamic
+  // getter so vitest can override per test without a process restart.
+  get cleanCloudWebhookSecret(): string {
+    return process.env.CLEANCLOUD_WEBHOOK_SECRET ?? "";
+  },
 };

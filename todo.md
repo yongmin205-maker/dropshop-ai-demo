@@ -466,15 +466,15 @@ Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "p
 
 ## Phase 23 — CleanCloud POS Integration (Stage 1 read-only)
 
-- [ ] **23-1** — Register `CLEANCLOUD_API_TOKEN` as a webdev secret and confirm the dev server picks it up
-- [ ] **23-2** — Live connectivity test: a single `POST /api/getCustomer` (or similar small payload) against `cleancloudapp.com` to confirm token works, the friend's account is on a Grow+ plan, and we don't hit a 404/401. If it fails, document the failure mode in `docs/adr/0010-cleancloud-access-blocker.md` before doing any more work.
-- [ ] **23-3** — Build `server/messaging/cleanCloudTransport.ts`: typed wrappers for `getCustomer`, `getOrders`, `getProducts`, `getPriceLists`. Includes (a) rate-limit aware fetch (max 3 req/sec), (b) 1-hour memo cache for product/pricelist responses, (c) typed response shapes derived from the docs page.
-- [ ] **23-4** — Mocked vitest in `server/messaging/cleanCloudTransport.test.ts` covering: token injection, request body shape, response decoding, rate-limit retry, and error path.
-- [ ] **23-5** — Add `server/messaging/cleanCloudAdapter.ts` that exposes the same surface as `mockCleanCloud.ts` (`getCustomerByPhone`, `getOrdersByPhone`, `searchPrice`, `listAllPrices`) but routes to the real transport when `DROPSHOP_USE_REAL_POS=1` is set. Defaults to mock so existing tests stay green.
-- [ ] **23-6** — Admin-only tRPC procedure `cleancloud.diagnostic.fetchSamples` that returns the first 3 customers and first 5 orders from the friend's real account, so we can visually confirm field mapping in the UI.
-- [ ] **23-7** — Small admin-only UI panel (or a one-off `/cleancloud-test` route) that renders the diagnostic samples as JSON for inspection.
-- [ ] **23-8** — Document the result in `docs/mainstreet-ai/integrations/cleancloud_stage1_result.md` (which fields actually came through, any surprises, recommended Stage-2 work).
-- [ ] **23-9** — Remind the user to regenerate the API token in CleanCloud admin after the integration is locked in (the value was shared in plaintext chat).
+- [x] **23-1** — Registered `CLEANCLOUD_API_TOKEN` as a webdev secret. Server picks it up via `ENV.cleanCloudApiToken` defined in `server/_core/env.ts`.
+- [x] **23-2** — Live connectivity test passed against the friend's real account: `getPriceLists` returned 9 lists, `getProducts` returned 95 SKUs, `getOrders` returned a paged window. Token valid, account on Grow+ plan with API enabled. See `server/messaging/cleanCloudTransport.live.test.ts`.
+- [x] **23-3** — `server/messaging/cleanCloudTransport.ts` built with typed wrappers for all 4 read endpoints. Rate-limit gate (3 req/sec, FIFO timestamp queue), 10s abort timeout, Result envelope, and forward-compatible permissive response types. (Memo cache deferred; not needed for live diagnostic.)
+- [x] **23-4** — `server/messaging/cleanCloudTransport.test.ts`: 16 hermetic tests covering token injection, request body shape, response decoding (4 endpoints), error envelopes, HTTP 5xx, non-JSON body, missing-token short-circuit, rate-limit serialization, and 3 rate-limit auto-retry cases.
+- [x] **23-5** — `server/messaging/cleanCloudAdapter.ts` normalizes real CleanCloud responses into the mock-shaped surface. `mockCleanCloud.ts` 4 helpers branch on `ENV.useRealPos`. Default stays mock; 360 tests continue to pass with no regression.
+- [x] **23-6** — `cleancloud.diagnostic` admin-only tRPC procedure returns price lists, products (first 5), orders (3-day window, first 5), and recently-added customers (7-day window, first 5, phone last-4 masked). Calls are sequentialized to respect the published 3 req/sec cap.
+- [x] **23-7** — `/cleancloud-test` route renders 4 diagnostic cards with Connection-status pill, returned-count badge, and pretty-printed JSON. Verified live: PriceLists 9, Products 95 (confirms B2B price lists per building: 985 Park Doorman, 1040 Park Ave, Inpir). Orders + Customers now green after 23f-1..4 fixes.
+- [ ] **23-8** — Document the result in `docs/mainstreet-ai/integrations/cleancloud_stage1_result.md` (which fields actually came through, any surprises, recommended Stage-2 work). [PENDING: write after friend confirms /cleancloud-test re-check]
+- [x] **23-9** — Reminded user. User declined to regenerate immediately, accepted the residual leak risk. Will surface again at Stage-2 lock-in.
 
 
 ## Phase 23 follow-ups (discovered during /cleancloud-test live diagnostic)
@@ -486,3 +486,20 @@ Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "p
 - [ ] **23f-5** — Investigate CleanCloud product flags (`te1`/`te2`/`te3`, `isSqmProduct`, `type`, `section`) to derive a customer-visible whitelist — operational SKUs like "A_Personal Bag to Return" must NOT surface in agent quotes.
 - [ ] **23f-6** — B2B pickup scenario: the friend's account has 9 price lists keyed by building (985 Park Doorman, 1040 Park Ave, Inpir, Monthly Subscription, …). Add a demo scenario where a doorman texts "I have 3 bags from 1040" → agent recognizes building, applies that price list.
 - [ ] **23f-7** — Webhook endpoint scaffold (`/api/cleancloud/webhook`) with HMAC-style shared-secret verification — required before any of the 9 webhook toggles in CleanCloud admin can be safely turned on.
+
+
+## Phase 23f-7 — CleanCloud webhook handler (DONE)
+
+- [x] drizzle: cleanCloudWebhookEvents table + migration 0009_luxuriant_the_fury.sql
+- [x] CLEANCLOUD_WEBHOOK_SECRET registered as webdev secret
+- [x] server/messaging/cleanCloudWebhook.ts (constant-time secret check, idempotent insert, 9-event scaffold dispatch)
+- [x] Mounted at POST /api/cleancloud/webhook in server/_core/index.ts
+- [x] 23 hermetic vitest tests in cleanCloudWebhook.test.ts
+- [x] Full suite: 383 passed | 8 skipped (was 360 passed; +23 new, 0 regressions)
+
+## Phase 23f — still pending (BLOCKED on friend)
+- [ ] 23f-5 product whitelist (need friend to confirm /cleancloud-test all-green first)
+- [ ] 23f-6 B2B building-pickup scenario (need friend to confirm B2B client list)
+- [ ] 23f-8 write docs/mainstreet-ai/integrations/cleancloud_stage1_result.md
+- [ ] Friend enables webhooks in CleanCloud admin using URL:
+      https://dropshopai-vx45nyzf.manus.space/api/cleancloud/webhook?token=<CLEANCLOUD_WEBHOOK_SECRET>

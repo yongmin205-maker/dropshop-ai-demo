@@ -324,3 +324,51 @@ export const errorAlerts = mysqlTable("errorAlerts", {
 });
 export type ErrorAlert = typeof errorAlerts.$inferSelect;
 export type InsertErrorAlert = typeof errorAlerts.$inferInsert;
+
+
+/**
+ * Phase 23f-7 — CleanCloud webhook event log
+ * -------------------------------------------
+ *
+ * CleanCloud POS POSTs webhook events to `POST /api/cleancloud/webhook` with a
+ * shared-secret URL query parameter (`?token=...`). The handler verifies the
+ * secret, then writes a row here for every event regardless of dispatch
+ * outcome — that way we have a forensic record even if dispatch logic later
+ * has a bug.
+ *
+ *   eventType examples (from cleancloudapp.com admin Webhooks panel):
+ *     "order.created"                  (In Store)
+ *     "order.created"                  (Pickup and Delivery)
+ *     "order.status_changed"
+ *     "order.pickup_rescheduled"
+ *     "order.delivery_rescheduled"
+ *     "order.nothing_to_pickup"
+ *     "order.deleted"
+ *     "customer.created"
+ *     "customer.updated"
+ *     "customer.deleted"
+ *
+ *   processedAt is non-null once dispatch logic has finished (success or
+ *   failure). When dispatch fails we still set processedAt and write the
+ *   error message to `dispatchError` so retries are explicit.
+ *
+ *   `eventId` is CleanCloud's own id when present (used for idempotency),
+ *   otherwise a synthesized hash of (eventType + payload) so duplicate
+ *   webhook retries don't double-fire downstream actions.
+ */
+export const cleanCloudWebhookEvents = mysqlTable("cleanCloudWebhookEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  eventType: varchar("eventType", { length: 64 }).notNull(),
+  eventId: varchar("eventId", { length: 128 }).notNull(),
+  payload: json("payload").notNull(),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  processedAt: timestamp("processedAt"),
+  dispatchError: text("dispatchError"),
+}, t => ({
+  // Idempotency: the same (eventType, eventId) pair must only ever be
+  // recorded once. Duplicate POSTs from CleanCloud retries short-circuit at
+  // INSERT time and we don't re-dispatch downstream actions.
+  uniqEventTypeId: uniqueIndex("uniq_event_type_id").on(t.eventType, t.eventId),
+}));
+export type CleanCloudWebhookEvent = typeof cleanCloudWebhookEvents.$inferSelect;
+export type InsertCleanCloudWebhookEvent = typeof cleanCloudWebhookEvents.$inferInsert;
