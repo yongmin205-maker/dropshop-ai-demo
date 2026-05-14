@@ -462,3 +462,16 @@ Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "p
 - [x] **Result: BLOCKED.** All documented endpoints return 404 from `api.nextiva.com`; `nextos.nextiva.com` answers 200 but only with a `<title>Nextiva Online Account - Secure Login</title>` HTML SPA — i.e. no JSON API surface for these credentials. Friend's plan is NextivaONE business phone, not Contact Center / NextOS developer access.
 - [x] Documented in `docs/adr/0009-nextiva-api-access-blocker.md` (full probe grid + 3 forward paths).
 - [ ] **Decision pending (friend):** (a) pivot to Twilio-only (already shipped); (b) Nextiva number-forwarding into Twilio so friend keeps the number; (c) ask Nextiva sales for Contact Center API plan. Manus is not building further on Nextiva until friend chooses.
+
+
+## Phase 23 — CleanCloud POS Integration (Stage 1 read-only)
+
+- [ ] **23-1** — Register `CLEANCLOUD_API_TOKEN` as a webdev secret and confirm the dev server picks it up
+- [ ] **23-2** — Live connectivity test: a single `POST /api/getCustomer` (or similar small payload) against `cleancloudapp.com` to confirm token works, the friend's account is on a Grow+ plan, and we don't hit a 404/401. If it fails, document the failure mode in `docs/adr/0010-cleancloud-access-blocker.md` before doing any more work.
+- [ ] **23-3** — Build `server/messaging/cleanCloudTransport.ts`: typed wrappers for `getCustomer`, `getOrders`, `getProducts`, `getPriceLists`. Includes (a) rate-limit aware fetch (max 3 req/sec), (b) 1-hour memo cache for product/pricelist responses, (c) typed response shapes derived from the docs page.
+- [ ] **23-4** — Mocked vitest in `server/messaging/cleanCloudTransport.test.ts` covering: token injection, request body shape, response decoding, rate-limit retry, and error path.
+- [ ] **23-5** — Add `server/messaging/cleanCloudAdapter.ts` that exposes the same surface as `mockCleanCloud.ts` (`getCustomerByPhone`, `getOrdersByPhone`, `searchPrice`, `listAllPrices`) but routes to the real transport when `DROPSHOP_USE_REAL_POS=1` is set. Defaults to mock so existing tests stay green.
+- [ ] **23-6** — Admin-only tRPC procedure `cleancloud.diagnostic.fetchSamples` that returns the first 3 customers and first 5 orders from the friend's real account, so we can visually confirm field mapping in the UI.
+- [ ] **23-7** — Small admin-only UI panel (or a one-off `/cleancloud-test` route) that renders the diagnostic samples as JSON for inspection.
+- [ ] **23-8** — Document the result in `docs/mainstreet-ai/integrations/cleancloud_stage1_result.md` (which fields actually came through, any surprises, recommended Stage-2 work).
+- [ ] **23-9** — Remind the user to regenerate the API token in CleanCloud admin after the integration is locked in (the value was shared in plaintext chat).

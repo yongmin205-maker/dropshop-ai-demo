@@ -22,4 +22,18 @@ export const ENV = {
   get allowedOrigins(): string {
     return process.env.ALLOWED_ORIGINS ?? "";
   },
+  // CleanCloud POS integration (Phase 23). Both accessors are dynamic getters
+  // so vitest can mutate `process.env` per test without a process restart.
+  // `cleanCloudApiToken` is the per-store secret pasted by the friend in
+  // CleanCloud admin -> Pickup and Delivery -> API. `useRealPos` is the
+  // gradual-rollout feature flag: when 1, the cleanCloudAdapter calls the
+  // real cleancloudapp.com endpoints; when unset / 0, it falls through to the
+  // existing `mockCleanCloud` seed data so demo flows stay green even if the
+  // token is missing.
+  get cleanCloudApiToken(): string {
+    return process.env.CLEANCLOUD_API_TOKEN ?? "";
+  },
+  get useRealPos(): boolean {
+    return process.env.DROPSHOP_USE_REAL_POS === "1";
+  },
 };

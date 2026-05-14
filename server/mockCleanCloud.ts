@@ -8,6 +8,13 @@ import {
   type MockPrice,
 } from "../drizzle/schema";
 import { getDb } from "./db";
+import { ENV } from "./_core/env";
+import {
+  realGetCustomerByPhone,
+  realGetOrdersByPhone,
+  realListAllPrices,
+  realSearchPrice,
+} from "./messaging/cleanCloudAdapter";
 
 /* ============================================================
  * Mock CleanCloud POS — seed data + tool-call helpers
@@ -217,6 +224,14 @@ export async function ensureSeeded(): Promise<void> {
 /* ----- Tool-call helpers (these mirror what a CleanCloud API client would do) ----- */
 
 export async function getCustomerByPhone(phone: string): Promise<MockCustomer | null> {
+  // Phase 23: route to the real CleanCloud account when the feature flag is
+  // on. Falls through to the seeded mock data otherwise. We deliberately do
+  // NOT call ensureSeeded() in real-POS mode to avoid mixing seed rows with
+  // live data in the same response shape; callers downstream of this helper
+  // already handle a null return cleanly.
+  if (ENV.useRealPos) {
+    return realGetCustomerByPhone(phone);
+  }
   await ensureSeeded();
   const db = await getDb();
   if (!db) return null;
@@ -225,6 +240,9 @@ export async function getCustomerByPhone(phone: string): Promise<MockCustomer | 
 }
 
 export async function getOrdersByPhone(phone: string): Promise<MockOrder[]> {
+  if (ENV.useRealPos) {
+    return realGetOrdersByPhone(phone);
+  }
   await ensureSeeded();
   const db = await getDb();
   if (!db) return [];
@@ -244,6 +262,9 @@ export async function getOrdersByPhone(phone: string): Promise<MockOrder[]> {
 const KNOWN_PRICE_CATEGORIES = new Set(["dryClean", "alteration", "laundry"]);
 
 export async function searchPrice(query: string): Promise<MockPrice[]> {
+  if (ENV.useRealPos) {
+    return realSearchPrice(query);
+  }
   await ensureSeeded();
   const db = await getDb();
   if (!db) return [];
@@ -270,6 +291,9 @@ export async function searchPrice(query: string): Promise<MockPrice[]> {
 }
 
 export async function listAllPrices(): Promise<MockPrice[]> {
+  if (ENV.useRealPos) {
+    return realListAllPrices();
+  }
   await ensureSeeded();
   const db = await getDb();
   if (!db) return [];

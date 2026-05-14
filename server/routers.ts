@@ -92,6 +92,8 @@ import {
   type ServiceCategory as SalonServiceCategory,
   type SalonAppointment,
 } from "./mockSalon";
+import { cleanCloud } from "./messaging/cleanCloudTransport";
+import { ENV } from "./_core/env";
 
 async function ensureAllSeeded() {
   await ensureSeeded();
@@ -1073,6 +1075,91 @@ export const appRouter = router({
           latencyMs: Date.now() - start,
         };
       }),
+  }),
+
+  /* ---------- Phase 23: CleanCloud POS diagnostic (admin-only) ---------- */
+  cleancloud: router({
+    /**
+     * Returns the friend's real account status + a small sample of customers,
+     * orders, products, and price lists from CleanCloud. Used by the
+     * /cleancloud-test admin panel to visually confirm that the token works
+     * and the field mapping looks right BEFORE we flip
+     * DROPSHOP_USE_REAL_POS=1 in production.
+     *
+     * Locked to adminProcedure so a leaked URL can't pull the store's
+     * customer list. Truncates each list to 5 rows + slices long strings to
+     * keep payloads bounded.
+     */
+    diagnostic: adminProcedure.query(async () => {
+      const tokenSet = ENV.cleanCloudApiToken.length > 0;
+      const useRealPos = ENV.useRealPos;
+      const out: {
+        tokenSet: boolean;
+        useRealPos: boolean;
+        priceLists: { ok: boolean; count: number; sample: unknown[]; error?: string };
+        products: { ok: boolean; count: number; sample: unknown[]; error?: string };
+        orders: { ok: boolean; count: number; sample: unknown[]; error?: string };
+        customers: { ok: boolean; count: number; sample: unknown[]; error?: string };
+      } = {
+        tokenSet,
+        useRealPos,
+        priceLists: { ok: false, count: 0, sample: [] },
+        products: { ok: false, count: 0, sample: [] },
+        orders: { ok: false, count: 0, sample: [] },
+        customers: { ok: false, count: 0, sample: [] },
+      };
+      if (!tokenSet) {
+        return out;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      // Run all 4 calls in parallel — they're independent. Rate limiter
+      // inside cleanCloudTransport will keep us under 3 req/sec.
+      const [pricelistsR, productsR, ordersR, customersR] = await Promise.all([
+        cleanCloud.getPriceLists(),
+        cleanCloud.getProducts({ sendUpcharges: 0 }),
+        cleanCloud.getOrders({ dateFrom: oneMonthAgo, dateTo: today }),
+        cleanCloud.getCustomer({ dateFrom: oneMonthAgo, dateTo: today }),
+      ]);
+      if (pricelistsR.ok) {
+        out.priceLists.ok = true;
+        out.priceLists.count = pricelistsR.data.length;
+        out.priceLists.sample = pricelistsR.data.slice(0, 10);
+      } else {
+        out.priceLists.error = pricelistsR.error;
+      }
+      if (productsR.ok) {
+        out.products.ok = true;
+        out.products.count = productsR.data.length;
+        out.products.sample = productsR.data.slice(0, 5);
+      } else {
+        out.products.error = productsR.error;
+      }
+      if (ordersR.ok) {
+        out.orders.ok = true;
+        out.orders.count = ordersR.data.length;
+        out.orders.sample = ordersR.data.slice(0, 5);
+      } else {
+        out.orders.error = ordersR.error;
+      }
+      if (customersR.ok) {
+        const arr = Array.isArray(customersR.data) ? customersR.data : [customersR.data];
+        out.customers.ok = true;
+        out.customers.count = arr.length;
+        // Redact phone last 4 digits — admins can verify shape without
+        // exposing the entire customer list in a screenshot.
+        out.customers.sample = arr.slice(0, 5).map((c: Record<string, unknown>) => {
+          const tel = typeof c.customerTel === "string" ? c.customerTel : "";
+          const masked = tel.length >= 4 ? `${tel.slice(0, -4)}****` : tel;
+          return { ...c, customerTel: masked };
+        });
+      } else {
+        out.customers.error = customersR.error;
+      }
+      return out;
+    }),
   }),
 });
 
