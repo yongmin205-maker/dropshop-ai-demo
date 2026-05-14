@@ -503,3 +503,30 @@ Requires Stripe Connect, real keys, separate deploy story. Demo for now: mock "p
 - [ ] 23f-8 write docs/mainstreet-ai/integrations/cleancloud_stage1_result.md
 - [ ] Friend enables webhooks in CleanCloud admin using URL:
       https://dropshopai-vx45nyzf.manus.space/api/cleancloud/webhook?token=<CLEANCLOUD_WEBHOOK_SECRET>
+
+
+## Phase 24 — P0: CleanCloud data strategy + Owner Assistant (Active)
+
+User direction (2026-05-14): "salon 은 지금 priority 아니야 depriotize하자. nextiva도. 당장 cleancloud data를 어떻게 활용할지가 p0"
+
+Deliverables (docs first, code later):
+- [ ] 24a · `docs/mainstreet-ai/integrations/cleancloud_data_strategy.md` — for each useful endpoint: which fields we use, which we ignore today (and why), retention assumptions (what's permanent on CleanCloud vs what we must mirror), gaps + open questions to ask friend
+- [ ] 24b · `docs/mainstreet-ai/integrations/cleancloud_pipeline.md` — 3-option data-pipeline comparison (pure on-demand pull · webhook + cache · webhook + nightly snapshot mirror) with explicit recommendation, schema sketch for the mirror tables, and a "what we'd lose if we don't mirror" section
+- [ ] 24c · `docs/mainstreet-ai/agentic_owner_assistant.md` — owner-question taxonomy (5–7 buckets), question→tool→data mapping table, agent architecture (RAG vs function-calling tools vs analytics tier), example end-to-end trace for "최근 2주 단골 손님 동향"
+- [ ] 24d · Hand all 3 docs to user for review, then translate winning option into a Phase 25 build plan
+
+## Phase 22b — Salon Smart-Slot (DEPRIORITIZED 2026-05-14)
+- [~] Module `server/salonSmartSlot.ts` + 20 vitest exists locally; 1 test failing on the host-window edge case
+- [~] No checkpoint, no UI wiring; leave on disk but stop work
+- [ ] Resume only after Phase 24 ships and user signals salon is back on
+
+## Nextiva — DEPRIORITIZED 2026-05-14
+- [~] Awaiting billing@nextiva.com reply remains in-flight in the background but no active work
+
+
+## Phase 24 — done 2026-05-14
+
+- [x] 24a · `docs/mainstreet-ai/integrations/cleancloud_data_strategy.md`
+- [x] 24b · `docs/mainstreet-ai/integrations/cleancloud_pipeline.md`
+- [x] 24c · `docs/mainstreet-ai/agentic_owner_assistant.md`
+- [x] 24d · Hand to user for review → Phase 25 build plan awaits user go-ahead
