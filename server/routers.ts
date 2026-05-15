@@ -11,6 +11,13 @@ import {
   recentSyncLogs,
   latestSyncLogForEndpoint,
 } from "./integrations/cleancloud/db";
+import { ask as askOwnerAssistant } from "./ownerAssistant/agent";
+import {
+  appendOwnerMessage,
+  createOwnerConversation,
+  listOwnerConversations,
+  loadOwnerConversation,
+} from "./ownerAssistant/db";
 import {
   appendMessage,
   appendMessageTx,
@@ -1226,6 +1233,124 @@ export const appRouter = router({
         recent: history,
       };
     }),
+  }),
+
+  /* ---------- Phase 25c: Owner Assistant chat ---------- */
+  ownerAssistant: router({
+    /**
+     * Run one turn of the agent. Creates a conversation row if
+     * conversationId is null (first turn). Persists both the user
+     * question and the assistant answer + trace, returns the answer +
+     * the (possibly new) conversationId so the client can keep the
+     * thread open.
+     */
+    ask: adminProcedure
+      .input(
+        z.object({
+          conversationId: z.number().int().nullable(),
+          question: z.string().min(1).max(2000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const ownerOpenId = ctx.user!.openId;
+
+        // 1. Ensure a conversation row. On a brand-new thread we seed
+        //    `title` with the first 80 chars of the question so the
+        //    sidebar has a meaningful label.
+        let conversationId = input.conversationId;
+        const isFirstTurn = conversationId === null;
+        if (isFirstTurn) {
+          const title = input.question.slice(0, 80);
+          conversationId = await createOwnerConversation({
+            ownerOpenId,
+            title,
+          });
+        }
+
+        // 2. Persist the user message before invoking the agent so a
+        //    crash mid-turn still leaves the question visible.
+        if (conversationId !== null) {
+          await appendOwnerMessage({
+            conversationId,
+            role: "user",
+            contentMarkdown: input.question,
+          });
+        }
+
+        // 3. Resolve freshness from the latest daily-pull log. The
+        //    `getOrders` endpoint is the most relevant for owner
+        //    questions about revenue/customers; if it's missing fall
+        //    back to a UTC mirror timestamp.
+        const resolveFreshnessHint = async (now: Date): Promise<string> => {
+          const latest = await latestSyncLogForEndpoint(
+            "cleancloud",
+            "getOrders",
+          );
+          if (latest?.finishedAt) {
+            return `${latest.finishedAt.toISOString().replace("T", " ").slice(0, 16)} UTC pull 기준`;
+          }
+          return `${now.toISOString().replace("T", " ").slice(0, 16)} UTC 기준 mirror`;
+        };
+
+        // 4. Run the agent.
+        const answer = await askOwnerAssistant(input.question, {
+          resolveFreshnessHint,
+        });
+
+        // 5. Persist the assistant turn with its trace + latency.
+        if (conversationId !== null) {
+          await appendOwnerMessage({
+            conversationId,
+            role: "assistant",
+            contentMarkdown: answer.answerMarkdown,
+            trace: answer.trace,
+            totalLatencyMs: answer.trace.totalLatencyMs,
+          });
+        }
+
+        return {
+          conversationId,
+          answerMarkdown: answer.answerMarkdown,
+          trace: answer.trace,
+        };
+      }),
+
+    /** Sidebar list — newest conversations first. */
+    listConversations: adminProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().int().min(1).max(50).default(20),
+          })
+          .default(() => ({ limit: 20 })),
+      )
+      .query(async ({ ctx, input }) =>
+        listOwnerConversations(ctx.user!.openId, input.limit),
+      ),
+
+    /** Load a full conversation + its messages for the chat view. */
+    getConversation: adminProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          messageLimit: z.number().int().min(1).max(500).optional(),
+        }),
+      )
+      .query(({ input }) =>
+        loadOwnerConversation(input.id, input.messageLimit),
+      ),
+
+    /** Manually-curated seeds for the empty-state of the chat UI. */
+    suggestedPrompts: adminProcedure.query(
+      () =>
+        [
+          "최근 2주 동안 단골 손님 동향",
+          "지난 달 대비 이번 달 매출 어땠어?",
+          "60일 이상 안 온 손님 알려줘",
+          "오늘 픽업 예정 몇 건?",
+          "지난 주 어떤 요일에 매출이 제일 높았어?",
+        ] as const,
+    ),
   }),
 });
 

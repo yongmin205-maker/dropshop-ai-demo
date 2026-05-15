@@ -307,6 +307,15 @@ export default function Home() {
 
         {/* Right: AI log + escalations */}
         <section className="col-span-4 space-y-4">
+          {/* Phase 25c — "Assistant" tab.
+              Integration choice: option (b) — a Link styled to look like a
+              tab that navigates to the dedicated `/owner-chat` route. Picked
+              over (a) embedding `<OwnerChat />` directly inside a TabContent
+              because OwnerChat is a `min-h-screen` page with its own header /
+              composer; cramming it into the ~400px right column would crop
+              the conversation list and freshness chip. The `/owner-chat`
+              route is also registered in `App.tsx` so the tab + URL stay in
+              sync, and a phone shortcut can deep-link straight to the chat. */}
           <Tabs defaultValue="approvals">
             <TabsList className="bg-background border border-border shadow-sm">
               <TabsTrigger value="approvals">
@@ -324,6 +333,14 @@ export default function Home() {
               </TabsTrigger>
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
               {isAdmin && <TabsTrigger value="errors">Errors</TabsTrigger>}
+              <Link
+                href="/owner-chat"
+                className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                title="Open Owner Assistant chat"
+              >
+                <Sparkles className="size-3.5" />
+                Assistant
+              </Link>
             </TabsList>
             <TabsContent forceMount value="approvals" className="mt-3 data-[state=inactive]:hidden">
               <ApprovalQueue

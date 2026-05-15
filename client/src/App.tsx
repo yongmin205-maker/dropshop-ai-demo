@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import Salon from "./pages/Salon";
 import CleanCloudTest from "./pages/CleanCloudTest";
+import OwnerChat from "./pages/OwnerChat";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -15,6 +16,10 @@ function Router() {
       <Route path={"/"} component={Home} />
       <Route path={"/salon"} component={Salon} />
       <Route path={"/cleancloud-test"} component={CleanCloudTest} />
+      {/* Phase 25c Owner Assistant — also surfaced as an "Assistant" tab
+          inside Home.tsx, but having a dedicated URL makes it bookmarkable
+          and lets the operator deep-link from a phone shortcut. */}
+      <Route path={"/owner-chat"} component={OwnerChat} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
