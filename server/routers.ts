@@ -1292,10 +1292,31 @@ export const appRouter = router({
           return `${now.toISOString().replace("T", " ").slice(0, 16)} UTC 기준 mirror`;
         };
 
-        // 4. Run the agent.
-        const answer = await askOwnerAssistant(input.question, {
-          resolveFreshnessHint,
-        });
+        // 4. Run the agent. Wrap in try/catch so an LLM 5xx / timeout
+        //    doesn't leave an orphan user-message row with no assistant
+        //    reply visible in the thread. On failure we persist a
+        //    synthetic assistant row carrying the error, then re-throw
+        //    so the client toast still fires. Operator UX: they see
+        //    "오류: …" in the thread instead of a silently half-turn.
+        let answer;
+        try {
+          answer = await askOwnerAssistant(input.question, {
+            resolveFreshnessHint,
+          });
+        } catch (err) {
+          const errorText =
+            err instanceof Error ? err.message : String(err);
+          if (conversationId !== null) {
+            await appendOwnerMessage({
+              conversationId,
+              role: "assistant",
+              contentMarkdown: `오류: ${errorText.slice(0, 500)}`,
+              trace: { error: errorText },
+              totalLatencyMs: null,
+            });
+          }
+          throw err;
+        }
 
         // 5. Persist the assistant turn with its trace + latency.
         if (conversationId !== null) {
@@ -1328,7 +1349,11 @@ export const appRouter = router({
         listOwnerConversations(ctx.user!.openId, input.limit),
       ),
 
-    /** Load a full conversation + its messages for the chat view. */
+    /** Load a full conversation + its messages for the chat view.
+     *  Tenant-scoped: a row whose ownerOpenId doesn't match the caller
+     *  returns null exactly like a row that doesn't exist. Phase 25c
+     *  is single-tenant, but the helper enforces this now so future
+     *  multi-owner work can't accidentally regress cross-owner reads. */
     getConversation: adminProcedure
       .input(
         z.object({
@@ -1336,8 +1361,8 @@ export const appRouter = router({
           messageLimit: z.number().int().min(1).max(500).optional(),
         }),
       )
-      .query(({ input }) =>
-        loadOwnerConversation(input.id, input.messageLimit),
+      .query(({ ctx, input }) =>
+        loadOwnerConversation(input.id, ctx.user!.openId, input.messageLimit),
       ),
 
     /** Manually-curated seeds for the empty-state of the chat UI. */

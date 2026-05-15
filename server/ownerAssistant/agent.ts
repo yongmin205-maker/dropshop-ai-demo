@@ -17,7 +17,7 @@
  *     recent posSyncLog row passed in by the caller.
  */
 
-import { planTools as defaultPlanTools, PLANNER_MAX_PLAN_STEPS } from "./planner";
+import { planTools as defaultPlanTools } from "./planner";
 import { routeQuestion as defaultRouteQuestion, type RouteFn } from "./router";
 import { executePlan } from "./executor";
 import { synthesizeAnswer as defaultSynthesize, type SynthesizeFn } from "./synthesizer";
@@ -100,10 +100,14 @@ export async function ask(
   let freshnessHint = await freshnessOf(now);
 
   if (!skipsTools) {
-    planSteps = await plan(question, category, now);
-    // The Planner may have retried internally — we treat the call
-    // count as +1 minimum. If the model retried we add an extra hop.
-    llmCallCount += planSteps.length > PLANNER_MAX_PLAN_STEPS ? 2 : 1;
+    // The Planner returns its own LLM-call count (1 normally, 2 if the
+    // shorten-to-N retry fired). Pre-fix the orchestrator inferred this
+    // from `planSteps.length > PLANNER_MAX_PLAN_STEPS` — provably
+    // unreachable because the planner already truncated. Trust the
+    // planner's report and add it.
+    const planResult = await plan(question, category, now);
+    planSteps = planResult.steps;
+    llmCallCount += planResult.llmCalls;
 
     const ctx: AgentContext = {
       source: "cleancloud",

@@ -42,9 +42,12 @@ function makeRoute(category: QuestionCategory, reasoning = "stub") {
   return vi.fn(async (_q: string) => ({ category, reasoning }));
 }
 
-function makePlan(steps: PlanStep[]) {
+function makePlan(steps: PlanStep[], llmCalls = 1) {
   return vi.fn(
-    async (_q: string, _c: QuestionCategory, _now: Date) => steps,
+    async (_q: string, _c: QuestionCategory, _now: Date) => ({
+      steps,
+      llmCalls,
+    }),
   );
 }
 
@@ -232,7 +235,11 @@ describe("ask — planner overproduce", () => {
       }),
       reason: `over-${i}`,
     }));
-    const plan = makePlan(sixSteps);
+    // llmCalls=2 reflects the planner's own retry hop. Pre-fix the
+    // orchestrator inferred this from `steps.length > MAX`, which was
+    // unreachable because the planner sliced before returning — this
+    // stub now mirrors the real planner's reported count.
+    const plan = makePlan(sixSteps, 2);
     const synth = makeSynth("over");
 
     const res = await ask("매출 분석", {

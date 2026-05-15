@@ -18,7 +18,12 @@
  */
 
 import { invokeLLM } from "../_core/llm";
-import { TOOL_NAMES, type PlanStep, type QuestionCategory } from "./types";
+import {
+  TOOL_NAMES,
+  type PlanResult,
+  type PlanStep,
+  type QuestionCategory,
+} from "./types";
 import { toolCatalogueForPrompt } from "./tools";
 
 const MAX_PLAN_STEPS = 5;
@@ -74,7 +79,7 @@ export type PlanFn = (
   question: string,
   category: QuestionCategory,
   now: Date,
-) => Promise<PlanStep[]>;
+) => Promise<PlanResult>;
 
 type RawPlan = {
   plan: Array<{ toolName: string; args: unknown; reason?: string }>;
@@ -117,15 +122,19 @@ async function callPlanner(
 export const planTools: PlanFn = async (question, category, now) => {
   const prompt1 = basePrompt(now);
   let raw = await callPlanner(prompt1, question, category);
+  let llmCalls = 1;
 
   if (raw.plan.length > MAX_PLAN_STEPS) {
     // Retry once with an explicit shorten-to-N hint. Plan length is
     // mostly the LLM not internalizing the cap; one nudge usually
-    // fixes it.
+    // fixes it. Track the hop so the orchestrator's llmCallCount
+    // matches reality — pre-fix it inferred this from the returned
+    // length, but we slice() below so that signal was lost.
     const prompt2 =
       basePrompt(now) +
       `\n\n중요: 직전에 ${raw.plan.length}개 tool 호출이 나왔습니다. ${MAX_PLAN_STEPS}개 이하로 줄이세요. 가장 중요한 tool만 유지.`;
     raw = await callPlanner(prompt2, question, category);
+    llmCalls = 2;
   }
 
   const steps: PlanStep[] = raw.plan.slice(0, MAX_PLAN_STEPS).flatMap((s) => {
@@ -141,7 +150,7 @@ export const planTools: PlanFn = async (question, category, now) => {
       },
     ];
   });
-  return steps;
+  return { steps, llmCalls };
 };
 
 export const PLANNER_MAX_PLAN_STEPS = MAX_PLAN_STEPS;

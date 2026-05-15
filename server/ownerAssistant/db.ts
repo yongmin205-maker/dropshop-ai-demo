@@ -72,14 +72,24 @@ export async function appendOwnerMessage(args: {
 
 export async function loadOwnerConversation(
   id: number,
+  ownerOpenId: string,
   messageLimit?: number,
 ): Promise<{ conversation: OwnerConversation; messages: OwnerMessage[] } | null> {
   const db = await getDb();
   if (!db) return null;
+  // Multi-tenant guard. Plan §0 says "권한 분리 없음" today, but the
+  // helper signature must accept ownerOpenId NOW so it cannot grow a
+  // cross-tenant read path. A second admin landing later must not be
+  // able to load another owner's chats by guessing/incrementing id.
   const convRows = await db
     .select()
     .from(ownerConversations)
-    .where(eq(ownerConversations.id, id))
+    .where(
+      and(
+        eq(ownerConversations.id, id),
+        eq(ownerConversations.ownerOpenId, ownerOpenId),
+      ),
+    )
     .limit(1);
   const conversation = convRows[0];
   if (!conversation) return null;

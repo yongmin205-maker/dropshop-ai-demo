@@ -114,3 +114,22 @@ export type AgentAnswer = {
   answerMarkdown: string;
   trace: AgentTrace;
 };
+
+/**
+ * Planner result. Pre-fix this was just `PlanStep[]`, which forced the
+ * orchestrator to infer "did the planner retry?" from `steps.length >
+ * MAX_PLAN_STEPS` — a check that is unreachable in practice because the
+ * planner truncates to the cap before returning. The orchestrator's
+ * `llmCallCount=4` invariant therefore only held in tests that stubbed
+ * the planner; in production a real model that overproduced 6→3 would
+ * still report llmCallCount=3. Reviewing this as a bug, we surface the
+ * retry honestly: the planner returns its own LLM-call count, the
+ * orchestrator simply adds it.
+ */
+export type PlanResult = {
+  steps: PlanStep[];
+  /** Number of times the planner LLM was called for this turn. 1 on
+   *  the happy path; 2 if the model over-produced and got the
+   *  shorten-to-N nudge. */
+  llmCalls: number;
+};
