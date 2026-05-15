@@ -1,0 +1,47 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "db",
+    "server",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://39WwWeSM5X46bee.root:198THViGlnaq98x4BACx@gateway06.us-east-1.prod.aws.tidbcloud.com:4000/VX45nYZFpdxaWGqd368ELU?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": null,
+  "git_remote": {
+    "repo_url": "s3://vida-prod-gitrepo/webdev-git/310519663322163541/VX45nYZFpdxaWGqd368ELU",
+    "access_key_id": "ASIAZV3A2ECZMO4YKGN4",
+    "secret_access_key": "6xsfDwRVoTRbFdyq5kfzc3GB8jqpeJiBSXFpuwW2",
+    "session_token": "IQoJb3JpZ2luX2VjEKT//////////wEaCXVzLWVhc3QtMSJGMEQCIA/kJ8hs4bac7RkXAkrZxxxrwn/wVEB4zJ/8diLNVSVtAiBLQlEDKdVurV8NGXATNL/bxauLNM6NKq7z76gWtlcJyir2AwhtEAQaDDY2NTM4NjA5ODg2NiIMlNQBLvTv3/76VCyUKtMDYcpYXf/snxa5KbZnnA2RZ7C7bilegUiuZSrElOQpjj9UQDfQ4/nX47RrPHoBcMRIUPUzhpfBDJRu9bQlDIafP/B10kRlwTeKrwupTVnOExGqrzy31h35ko2tDnSzSl0aQNP3nb8WzcmEIJ/d+653p9iltibQ/kaAnWVPVEUIOw3nIMHUA4D++w/p9mZrEJgo0USAqloozMtgyr3lkVNgXU/cINibOVLLD+oixkJdOAs71hkTUgXeEAj7Ox8DRFWK1gHA31vqMrs0Mx7GUFbDJ7ePm4QvT9jVqQbOBGocEIEQ2ZiLMptxabs+TEROx61Mg7WFFAErV1QGw6vo55yoLKwcuB1yuzw8n1U43/Q7bY5Yl745BNiAcj0ciBIAT5uEcCW1cQLl66wZlzSfPZDXtNHZ95/pXO+jygT0cs8VAupO/5xuvU9+u0oh1R+CJRMUg94Q3lLR6entbPXYtm+s/BnDjWxcMqo/HoFBwDwSJjY06oUOygWt6gumepJtWIZJ0y34spyTMeWG7PsBGkN4DulTXwRNBygQnVZcfSXOpcZCt2xm2EEmtqIeoRtYf48Q7DhcPQTuD+6/Hv5PD8HAn2czs+oLu2/PI5RESQAxWsaBK5ow0LWa0AY6ngGXLdb7/DxlCXHY4aGFizpcXT3oinbLWK9Nug9neb641K0Qm9CrWF8Z1/x0BM1TLxIhcMQUrZRuxD77xf9IoqJ4FYVwaRnpim7OSPPB/avpo0N/E/tEvoYA+WY+8pA+Wh12EjSwTdsZflVtMq/njMVKd/SOVo2P8waePNUjFOMbqJdp+lglPU05sJNBu2NKvkw63W2RxbGbO81TEw+wIA==",
+    "expiration": "2026-05-15T16:02:24.000Z"
+  },
+  "name": "dropshop-ai-demo",
+  "path": "/home/ubuntu/dropshop-ai-demo",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "D8yXqYMgTU8jXfbgxnDrZC",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "CLEANCLOUD_API_TOKEN": "c8f22967138951736e1fbf654ace071973c89cef",
+    "CLEANCLOUD_WEBHOOK_SECRET": "73479bf512e63a4bf91b981c2135bc271487f6b831f6df0d872dd9116d91623a",
+    "JWT_SECRET": "k6nv5gX5eRnaMh2TtdcbRX",
+    "NEXTIVA_CAMPAIGN_ID": "N/A",
+    "NEXTIVA_PASSWORD": "957Parkave!",
+    "NEXTIVA_PHONE_NUMBER": "+16468892423",
+    "NEXTIVA_USERNAME": "care@visitdropshop.com",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "Ethan Jo",
+    "OWNER_OPEN_ID": "j7S4Knb4NFNv9pM9zWjpc6",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "dd6ab5c1-3d27-41e7-a907-d70716ff88b4",
+    "VITE_APP_ID": "VX45nYZFpdxaWGqd368ELU",
+    "VITE_APP_LOGO": "https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663322163541/ZBpNMATXSrNEdNFJ.png",
+    "VITE_APP_TITLE": "DropShop AI Agent Demo",
+    "VITE_FRONTEND_FORGE_API_KEY": "6iH4gJaDMnbsss4QkXYvPd",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
