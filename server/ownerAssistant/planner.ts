@@ -1,0 +1,147 @@
+/**
+ * Planner LLM — given a categorized question and the tool catalogue,
+ * produces an ordered list of tool calls to execute. Hard caps:
+ *   - max 5 tool calls per plan (cost + UX)
+ *   - if the model returns >5 tools, we retry once with an explicit
+ *     "shorten to 5" hint. The second attempt is also capped; we
+ *     simply truncate if it still over-produces.
+ *
+ * The Planner gets only the *names + descriptions* of tools. Arg
+ * schemas are validated by the Executor (zod parse). This keeps the
+ * Planner's prompt small (every turn pays the token cost) and the
+ * error surface honest — bad args become trace errors, not a stuck
+ * Planner.
+ *
+ * The Planner is also told today's date so date math
+ * ("지난 2주", "오늘") is grounded in real time and not the model's
+ * training cutoff.
+ */
+
+import { invokeLLM } from "../_core/llm";
+import { TOOL_NAMES, type PlanStep, type QuestionCategory } from "./types";
+import { toolCatalogueForPrompt } from "./tools";
+
+const MAX_PLAN_STEPS = 5;
+
+const OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["plan"],
+  properties: {
+    plan: {
+      type: "array",
+      maxItems: 10, // we'll truncate to MAX_PLAN_STEPS in code; the
+      // schema is loose so the Planner doesn't refuse on overflow.
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["toolName", "args", "reason"],
+        properties: {
+          toolName: {
+            type: "string",
+            enum: [...TOOL_NAMES],
+          },
+          args: { type: "object", additionalProperties: true },
+          reason: { type: "string", maxLength: 200 },
+        },
+      },
+    },
+  },
+} as const;
+
+function basePrompt(now: Date): string {
+  const isoNow = now.toISOString();
+  const catalogue = toolCatalogueForPrompt()
+    .map((t) => `- ${t.name} (${t.category}): ${t.description}`)
+    .join("\n");
+  return `당신은 매장 점주 질문에 답하기 위한 tool 호출 계획을 세웁니다.
+오늘 시각: ${isoNow} (UTC).
+
+사용 가능한 tool 목록:
+${catalogue}
+
+규칙:
+- 최대 ${MAX_PLAN_STEPS}개 tool 호출까지. 짧을수록 좋음.
+- args는 각 tool의 입력 스키마에 맞는 literal 값. 날짜는 ISO 8601 (UTC).
+- 같은 tool을 두 번 부르지 말 것 — 같은 데이터를 두 번 가져오지 않음.
+- aggregate 질문에 lookup tool을 쓰지 말 것. lookup 질문에 aggregate tool을 쓰지 말 것.
+- "오늘" / "방금 영업 중"이 아닌 과거 기간 질문에는 mirror tools (aggregateRevenue 등)를 쓸 것. live tools는 오늘자 전용.
+- reason은 짧은 한국어 한 줄.
+`;
+}
+
+export type PlanFn = (
+  question: string,
+  category: QuestionCategory,
+  now: Date,
+) => Promise<PlanStep[]>;
+
+type RawPlan = {
+  plan: Array<{ toolName: string; args: unknown; reason?: string }>;
+};
+
+async function callPlanner(
+  prompt: string,
+  question: string,
+  category: QuestionCategory,
+): Promise<RawPlan> {
+  const res = await invokeLLM({
+    messages: [
+      { role: "system", content: prompt },
+      {
+        role: "user",
+        content: `Category: ${category}\nQuestion: ${question}`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "owner_assistant_plan",
+        strict: true,
+        schema: OUTPUT_SCHEMA,
+      },
+    },
+  });
+  const content = res.choices?.[0]?.message?.content ?? "{}";
+  try {
+    const parsed = JSON.parse(typeof content === "string" ? content : "{}");
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.plan)) {
+      return parsed as RawPlan;
+    }
+  } catch {
+    /* fall through */
+  }
+  return { plan: [] };
+}
+
+export const planTools: PlanFn = async (question, category, now) => {
+  const prompt1 = basePrompt(now);
+  let raw = await callPlanner(prompt1, question, category);
+
+  if (raw.plan.length > MAX_PLAN_STEPS) {
+    // Retry once with an explicit shorten-to-N hint. Plan length is
+    // mostly the LLM not internalizing the cap; one nudge usually
+    // fixes it.
+    const prompt2 =
+      basePrompt(now) +
+      `\n\n중요: 직전에 ${raw.plan.length}개 tool 호출이 나왔습니다. ${MAX_PLAN_STEPS}개 이하로 줄이세요. 가장 중요한 tool만 유지.`;
+    raw = await callPlanner(prompt2, question, category);
+  }
+
+  const steps: PlanStep[] = raw.plan.slice(0, MAX_PLAN_STEPS).flatMap((s) => {
+    // Defensive: drop anything that isn't a recognized tool name.
+    if (!TOOL_NAMES.includes(s.toolName as (typeof TOOL_NAMES)[number])) {
+      return [];
+    }
+    return [
+      {
+        toolName: s.toolName as PlanStep["toolName"],
+        argsJson: JSON.stringify(s.args ?? {}),
+        reason: typeof s.reason === "string" ? s.reason : "",
+      },
+    ];
+  });
+  return steps;
+};
+
+export const PLANNER_MAX_PLAN_STEPS = MAX_PLAN_STEPS;

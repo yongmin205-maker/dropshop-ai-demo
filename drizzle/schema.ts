@@ -678,3 +678,56 @@ export const posProductChanges = mysqlTable("posProductChanges", {
 });
 export type PosProductChange = typeof posProductChanges.$inferSelect;
 export type InsertPosProductChange = typeof posProductChanges.$inferInsert;
+
+/* ============================================================
+ * Phase 25c — Owner Assistant conversation persistence
+ * ============================================================
+ *
+ * One ownerConversations row per chat thread. ownerMessages stores
+ * every user + assistant turn. assistant rows additionally carry the
+ * agent's trace JSON (router decision, plan, per-tool calls + timings)
+ * so the UI can render a collapsible "what did the agent do?" box.
+ *
+ * Why a separate table from the existing `conversations` table:
+ *   - `conversations` is keyed by Customer phone for SMS threads — the
+ *     domain is Customer ↔ Store. This is Owner ↔ Agent and has no
+ *     phone, no escalations, no drafts.
+ *   - Owner Assistant turns produce large structured `trace` blobs that
+ *     would bloat the SMS message table. Keep the surfaces orthogonal.
+ *
+ * Single-tenant assumption: ownerOpenId is stored but no procedure
+ * filters on it today. When multi-owner ships, every read adds a
+ * WHERE ownerOpenId = ? clause and the existing rows backfill against
+ * ENV.ownerOpenId.
+ */
+
+export const ownerConversations = mysqlTable("ownerConversations", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
+  /** First-question summary, optional. Filled by the orchestrator on
+   *  the first turn so the listConversations sidebar has a label
+   *  beyond the timestamp. */
+  title: varchar("title", { length: 256 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type OwnerConversation = typeof ownerConversations.$inferSelect;
+export type InsertOwnerConversation = typeof ownerConversations.$inferInsert;
+
+export const OWNER_MESSAGE_ROLES = ["user", "assistant"] as const;
+export type OwnerMessageRole = (typeof OWNER_MESSAGE_ROLES)[number];
+
+export const ownerMessages = mysqlTable("ownerMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  conversationId: int("conversationId").notNull(),
+  role: mysqlEnum("role", OWNER_MESSAGE_ROLES).notNull(),
+  contentMarkdown: text("contentMarkdown").notNull(),
+  /** AgentTrace JSON — present only on assistant rows. */
+  trace: json("trace"),
+  /** End-to-end orchestrator latency in ms. Present only on assistant
+   *  rows. */
+  totalLatencyMs: int("totalLatencyMs"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type OwnerMessage = typeof ownerMessages.$inferSelect;
+export type InsertOwnerMessage = typeof ownerMessages.$inferInsert;
