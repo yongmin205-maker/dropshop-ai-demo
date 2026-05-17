@@ -8,6 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { registerTwilioWebhook } from "../twilioWebhook";
 import { registerCleanCloudWebhook } from "../messaging/cleanCloudWebhook";
 import { registerCleanCloudDailyPullCron } from "../integrations/cleancloud/scheduledHandler";
+import { registerDailyBriefingCron } from "../briefing/scheduledHandler";
 import { requireSameOrigin } from "../originGuard";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -48,6 +49,7 @@ async function startServer() {
   registerTwilioWebhook(app);
   registerCleanCloudWebhook(app);
   registerCleanCloudDailyPullCron(app);
+  registerDailyBriefingCron(app);
   // tRPC API — §5.10 require same-origin / allow-listed Origin on all
   // state-changing requests so a malicious site cannot piggy-back on the
   // operator's session cookie.
