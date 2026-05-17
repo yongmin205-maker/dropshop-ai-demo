@@ -731,3 +731,61 @@ export const ownerMessages = mysqlTable("ownerMessages", {
 });
 export type OwnerMessage = typeof ownerMessages.$inferSelect;
 export type InsertOwnerMessage = typeof ownerMessages.$inferInsert;
+
+
+/* ────────────────────────────────────────────────────────────
+ * Phase 25b — Daily Briefing
+ *
+ * LLM-generated overnight summary of yesterday's POS activity.
+ * Generated at 07:00 ET by a Heartbeat cron after the 03:00 ET daily
+ * pull lands.
+ *
+ * Schema notes:
+ *   - `briefingDate` is the local NYC business day the briefing
+ *     summarises (the *previous* business day relative to when the
+ *     cron fires), formatted YYYY-MM-DD. UNIQUE — only one briefing
+ *     per date; subsequent generations overwrite via
+ *     ON DUPLICATE KEY UPDATE.
+ *   - `periodStartMs/periodEndMs` are stored as varchar(20) (rather
+ *     than bigint) because TiDB/Drizzle's bigint round-trip is lossy
+ *     when values approach the 2^53 boundary in JSON; we always
+ *     parse them with Number() at read time.
+ *   - LLM observability (`llmModel`, `promptTokens`, `completionTokens`)
+ *     is best-effort — null when invokeLLM doesn't surface them.
+ *   - Failure mode: if the LLM call fails we still insert a row with
+ *     a fallback summary "(브리핑 생성 실패 — 잠시 후 다시 시도)"
+ *     and the upstream error in `errorMessage`.
+ *   - `deliveredAt` is set when notifyOwner has pushed the briefing,
+ *     so we don't double-push on retries.
+ * ──────────────────────────────────────────────────────────── */
+
+export const dailyBriefings = mysqlTable("dailyBriefings", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Local NYC date the briefing summarises. Format `YYYY-MM-DD`. UNIQUE. */
+  briefingDate: varchar("briefingDate", { length: 10 }).notNull().unique(),
+  /** Inclusive UNIX-ms start of the NYC business-day window
+   *  (04:00 ET on briefingDate). Stored as string. */
+  periodStartMs: varchar("periodStartMs", { length: 20 }).notNull(),
+  /** Exclusive UNIX-ms end of the window (04:00 ET on the day after
+   *  briefingDate). Stored as string. */
+  periodEndMs: varchar("periodEndMs", { length: 20 }).notNull(),
+  /** Snapshot of metrics used to build the summary so the UI chip
+   *  row renders without re-querying. Shape: `DailyMetrics`. */
+  metrics: json("metrics").notNull(),
+  /** Markdown summary in Korean (point-of-view: 점주). 4–7 sentences,
+   *  optional pipe table. */
+  summaryMarkdown: text("summaryMarkdown").notNull(),
+  /** Best-effort observability — null when not surfaced. */
+  llmModel: varchar("llmModel", { length: 64 }),
+  promptTokens: int("promptTokens"),
+  completionTokens: int("completionTokens"),
+  /** When the LLM call started. */
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+  /** When notifyOwner successfully pushed this briefing. */
+  deliveredAt: timestamp("deliveredAt"),
+  /** Set when generation failed. */
+  errorMessage: text("errorMessage"),
+});
+
+export type DailyBriefing = typeof dailyBriefings.$inferSelect;
+export type InsertDailyBriefing = typeof dailyBriefings.$inferInsert;

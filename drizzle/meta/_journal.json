@@ -85,6 +85,13 @@
       "when": 1778989519573,
       "tag": "0011_tiny_living_tribunal",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1778990031271,
+      "tag": "0012_chubby_bullseye",
+      "breakpoints": true
     }
   ]
 }
