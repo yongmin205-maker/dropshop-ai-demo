@@ -43,6 +43,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useVisiblePollInterval } from "@/hooks/useVisiblePollInterval";
 import { useSimpleMode } from "@/hooks/useSimpleMode";
 import { SimpleModeToggle } from "@/components/SimpleModeToggle";
+import { DailyBriefingPanel } from "@/components/DailyBriefingPanel";
 import { ApprovalQueue } from "./dropshop/ApprovalQueue";
 import { intentTone } from "./dropshop/intentTone";
 import { Link } from "wouter";
@@ -333,6 +334,7 @@ export default function Home() {
               </TabsTrigger>
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
               {isAdmin && <TabsTrigger value="errors">Errors</TabsTrigger>}
+              {isAdmin && <TabsTrigger value="briefing">브리핑</TabsTrigger>}
               <Link
                 href="/owner-chat"
                 className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -370,6 +372,11 @@ export default function Home() {
             {isAdmin && (
               <TabsContent forceMount value="errors" className="mt-3 data-[state=inactive]:hidden">
                 <ErrorsPanel />
+              </TabsContent>
+            )}
+            {isAdmin && (
+              <TabsContent forceMount value="briefing" className="mt-3 data-[state=inactive]:hidden">
+                <DailyBriefingPanel />
               </TabsContent>
             )}
           </Tabs>

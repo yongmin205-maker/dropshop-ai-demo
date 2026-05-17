@@ -8,6 +8,12 @@ import { adminProcedure, publicProcedure, router } from "./_core/trpc";
 import { runDailyPull } from "./integrations/cleancloud/pullJob";
 import { runBackfill } from "./integrations/cleancloud/backfill";
 import {
+  runDailyBriefing,
+  getLatestBriefing,
+  getBriefingByDate,
+  listBriefings,
+} from "./briefing/dailyBriefing";
+import {
   recentSyncLogs,
   latestSyncLogForEndpoint,
 } from "./integrations/cleancloud/db";
@@ -1376,6 +1382,50 @@ export const appRouter = router({
           "지난 주 어떤 요일에 매출이 제일 높았어?",
         ] as const,
     ),
+  }),
+
+  /* ---------- Phase 25b: Daily Briefing ---------- */
+  briefing: router({
+    /** Latest briefing for the admin home card. */
+    latest: adminProcedure.query(async () => {
+      const row = await getLatestBriefing();
+      return row ?? null;
+    }),
+
+    /** Specific date — used by history drilldown. */
+    byDate: adminProcedure
+      .input(z.object({ briefingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+      .query(async ({ input }) => {
+        const row = await getBriefingByDate(input.briefingDate);
+        return row ?? null;
+      }),
+
+    /** Newest-first history list, max 30. */
+    list: adminProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(30).optional() }).optional())
+      .query(async ({ input }) => {
+        const limit = input?.limit ?? 30;
+        return listBriefings(limit);
+      }),
+
+    /** Manual regeneration — overwrites the row for that date. */
+    generateNow: adminProcedure
+      .input(
+        z
+          .object({
+            briefingDate: z
+              .string()
+              .regex(/^\d{4}-\d{2}-\d{2}$/)
+              .optional(),
+          })
+          .optional(),
+      )
+      .mutation(async ({ input }) => {
+        const briefingDate =
+          input?.briefingDate ??
+          (await import("./briefing/scheduledHandler")).yesterdayInNYC();
+        return runDailyBriefing({ briefingDate });
+      }),
   }),
 });
 
