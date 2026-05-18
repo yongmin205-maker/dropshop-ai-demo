@@ -697,24 +697,24 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 
 ### Owner Assistant bug
 - [x] Diagnose `compareTimeWindows` zod failure: FIXED in 25-enrich-1. All 12 ToolDefinitions now ship `argsExample`; `toolCatalogueForPrompt` injects them; planner prompt forbids empty args.
-- [ ] Vitest contract: planner output for "지난 달 대비 이번 달 매출" must include `windowA`, `windowB`, valid `metric`.
+- [x] Vitest contract: planner output for "지난 달 대비 이번 달 매출" must include `windowA`, `windowB`, valid `metric`. (10/10 tests in `planner.test.ts`, plus live LLM smoke confirms correct args.)
 
-### Customer characteristics
-- [ ] Add columns to `posCustomers`: `firstOrderAt` (number, ms), `lastOrderAt` (number, ms), `lifetimeOrders` (int), `lifetimeRevenueCents` (int).
-- [ ] Migration via `pnpm db:push`.
-- [ ] Backfill rollups from existing 23,257 orders (one-shot script that aggregates per customerExternalId).
-- [ ] Adjust `pullOrders` daily flow to incrementally update these rollups.
+### Customer characteristics (DEFERRED — YAGNI)
+- [~] Add columns to `posCustomers`: deferred. Lifetime info is already surfaced for top-3 daily spenders via `topSpenderProfiles`; assistant tools query GROUP BY on-the-fly in <50ms over 1475 mirrored customers. Revisit when customer count >10k.
+- [~] Migration via `pnpm db:push`: deferred (depends on column work).
+- [~] Backfill rollups: deferred (depends on column work).
+- [~] Adjust `pullOrders` to incrementally update rollups: deferred (depends on column work).
 
 ### Daily metrics enrichment
 - [x] `returningCustomerCount` = unique `customerExternalId` whose `firstOrderAt < periodStartMs`.
 - [x] `serviceMix`: parse `posOrderItems` → group by normalized category (Shirts / Wash & Fold / Dry Clean / Alterations / Other / Pants / Bedding), output {category, quantity, revenueCents}.
 - [x] `hourlyDistribution`: 24-bucket array of order count by NYC hour, plus `peakHour`.
-- [ ] `dayOfWeekVsAvg`: revenue & order count vs same-DOW 4-week trailing average (% delta).
+- [x] `dayOfWeekVsAvg`: revenue & order count vs same-DOW 4-week trailing average (% delta). (5 tests; appears in 5/16 regen as -13.7% revenue / +42.2% orders.)
 - [x] `topSpenderProfiles`: top 3 spenders that day with `lifetimeOrderCount`, `lifetimeRevenueCents`, `firstOrderAt`, `lastOrderAt`, `isReturning` flag.
 
 ### Weather hook
-- [ ] Open-Meteo NYC daily fetch (40.7128, -74.0060) for `briefingDate` (no API key needed). Persist `weatherSummary: { tempHighC, tempLowC, precipMm, conditionCode }` on briefing row.
-- [ ] Cache: don't re-fetch if already saved.
+- [x] Open-Meteo NYC daily fetch (40.7128, -74.0060) for `briefingDate` (no API key needed). 8 tests. (Persistence on row deferred — weather is recomputed on regen since archive API is stable; YAGNI.)
+- [~] Cache: deferred. Open-Meteo archive is idempotent and free; no cache needed yet.
 
 ### LLM prompt rewrite
 - [x] `buildBriefingPrompt` rewritten to inject serviceMix top-3, peakHour, topSpenderProfiles with 단골/신규 tags, and an explicit anomaly callout requirement. (Weather + DOW-avg deferred to next round.)
@@ -731,8 +731,8 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [x] dailyMetrics: dowVsAvg (4-week same-DOW baseline) + 5 tests
 - [x] Weather: Open-Meteo NYC daily archive + 8 tests
 - [x] Briefing prompt: weather correlation rule + ±20% DOW alert rule
-- [ ] "이름 미상" 원인 조사 + fix (sync 이름 추출 + UI fallback)
-- [ ] 월요일 주간 브리핑 (지난주 7일 rollup 섹션)
-- [ ] Customer rollup permanent columns + backfill + daily increment
-- [ ] 5/16 briefing 재생성 (새 fields 반영)
-- [ ] Full test suite + tsc + checkpoint
+- [x] "이름 미상" 원인: 807명의 customer가 mirror sync에서 누락 (CleanCloud `getCustomer dateFrom/dateTo`는 update된 customer만 반환, 주문은 1242명을 참조). Fix: `customerCatchup.ts` 모듈 + 1회 backfill (807명 성공) + `pullJob.ts`에 daily 자동 catchup 통합. customer-list 도구 출력에 phoneE164 추가 + synthesizer prompt "신규 손님 #ID" fallback 룰 강화. (7+1 tests, customerCatchup + pullJob integration.)
+- [x] 월요일 주간 브리핑 (지난주 7일 rollup 섬션): `weeklyRollup.ts` (8 tests, pure compute + DB loader with 4-week-prior comparison + per-DOW breakdown) 다음 `runDailyBriefing` 에 통합. Monday에만 생성, prompt에 "지난주 돌아보기" 서브헤더 룰 추가. (3 integration tests in `dailyBriefing.test.ts`.)
+- [~] Customer rollup permanent columns: deferred (YAGNI). Current GROUP-BY queries on 1475 customers are <50ms; lifetime info already surfaced via `topSpenderProfiles`. Revisit when customer count >10k or briefing latency >2s.
+- [x] 5/16 briefing 재생성: gemini-2.5-flash, errorMessage null, llm 1회 호출. 헤드라인에 dowVsAvg +42.2% / -13.7% 둘 다 명시, "주문은 늘었는데 매출은 줄었다 → 건당 그고각" 인사이트, 단골 32/신규 2 정확 찝음, 운영 제안 1개. weeklyRollup null (토요일, 의도대로).
+- [x] Full test suite (569 passed, 9 skipped) + tsc clean + checkpoint 8db1b6b4.

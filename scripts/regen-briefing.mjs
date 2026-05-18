@@ -26,7 +26,17 @@ console.log("metrics:", {
   peakHour: result.metrics.peakHour,
   serviceMixTop3: result.metrics.serviceMix.slice(0, 3),
   topSpenderProfiles: result.metrics.topSpenderProfiles,
+  dowVsAvg: result.metrics.dowVsAvg,
 });
+console.log("weather:", result.weather);
+console.log("weeklyRollup:", result.weeklyRollup
+  ? {
+      window: `${result.weeklyRollup.weekStartDate} → ${result.weeklyRollup.weekEndDate}`,
+      orderCount: result.weeklyRollup.orderCount,
+      revenueCents: result.weeklyRollup.revenueCents,
+      vs4WeeksAgo: result.weeklyRollup.vs4WeeksAgo,
+    }
+  : null);
 console.log("\n========== SUMMARY MARKDOWN ==========\n");
 console.log(result.summaryMarkdown);
 console.log("\n======================================");
