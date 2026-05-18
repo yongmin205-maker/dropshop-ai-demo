@@ -312,3 +312,97 @@ describe("runDailyBriefing (DB-skipping path)", () => {
     expect(result.errorMessage?.length).toBeLessThanOrEqual(480);
   });
 });
+
+
+describe("runDailyBriefing — Monday weekly rollup", () => {
+  const weeklyFixture = () => ({
+    weekEndDate: "2026-05-18",
+    weekStartDate: "2026-05-11",
+    windowStartMs: 0,
+    windowEndMs: 1,
+    orderCount: 42,
+    revenueCents: 250000,
+    uniqueCustomerCount: 30,
+    avgOrderCents: 5952,
+    largestOrderCents: 18000,
+    byDayOfWeek: [
+      { dow: 0, name: "월", orderCount: 5, revenueCents: 30000 },
+      { dow: 1, name: "화", orderCount: 6, revenueCents: 35000 },
+      { dow: 2, name: "수", orderCount: 7, revenueCents: 40000 },
+      { dow: 3, name: "목", orderCount: 8, revenueCents: 45000 },
+      { dow: 4, name: "금", orderCount: 9, revenueCents: 50000 },
+      { dow: 5, name: "토", orderCount: 4, revenueCents: 30000 },
+      { dow: 6, name: "일", orderCount: 3, revenueCents: 20000 },
+    ],
+    vs4WeeksAgo: {
+      revenueDeltaPct: 12.5,
+      orderCountDeltaPct: 5,
+      priorRevenueCents: 222222,
+      priorOrderCount: 40,
+    },
+  });
+
+  it("loads weeklyRollup on Mondays and embeds 지난주 돌아보기 facts in prompt", async () => {
+    const loadMetrics = vi.fn().mockResolvedValue(
+      metricsFixture({ briefingDate: "2026-05-18" }),
+    );
+    let capturedUserContent = "";
+    const invokeLLMFn = vi.fn().mockImplementation(async (msgs) => {
+      capturedUserContent = String(msgs[1].content);
+      return llmResult("월요일 요약");
+    });
+    const loadWeeklyRollup = vi.fn().mockResolvedValue(weeklyFixture());
+
+    const result = await runDailyBriefing({
+      briefingDate: "2026-05-18",
+      loadMetrics,
+      invokeLLMFn,
+      loadWeather: async () => null,
+      loadWeeklyRollup,
+    });
+
+    expect(loadWeeklyRollup).toHaveBeenCalledOnce();
+    expect(result.weeklyRollup).not.toBeNull();
+    expect(result.weeklyRollup?.orderCount).toBe(42);
+    expect(capturedUserContent).toContain("지난주 돌아보기");
+    expect(capturedUserContent).toContain("4주 전 같은 기간 대비 매출");
+    expect(capturedUserContent).toContain("+12.5%");
+    expect(capturedUserContent).toContain("월=5건");
+  });
+
+  it("does NOT load weeklyRollup on a non-Monday (Tuesday)", async () => {
+    const loadMetrics = vi.fn().mockResolvedValue(
+      metricsFixture({ briefingDate: "2026-05-19" }),
+    );
+    const invokeLLMFn = vi.fn().mockResolvedValue(llmResult("ok"));
+    const loadWeeklyRollup = vi.fn();
+
+    const result = await runDailyBriefing({
+      briefingDate: "2026-05-19",
+      loadMetrics,
+      invokeLLMFn,
+      loadWeather: async () => null,
+      loadWeeklyRollup,
+    });
+
+    expect(loadWeeklyRollup).not.toHaveBeenCalled();
+    expect(result.weeklyRollup).toBeNull();
+  });
+
+  it("respects loadWeeklyRollup: null escape hatch even on Monday", async () => {
+    const loadMetrics = vi.fn().mockResolvedValue(
+      metricsFixture({ briefingDate: "2026-05-18" }),
+    );
+    const invokeLLMFn = vi.fn().mockResolvedValue(llmResult("ok"));
+
+    const result = await runDailyBriefing({
+      briefingDate: "2026-05-18",
+      loadMetrics,
+      invokeLLMFn,
+      loadWeather: async () => null,
+      loadWeeklyRollup: null,
+    });
+
+    expect(result.weeklyRollup).toBeNull();
+  });
+});

@@ -17,6 +17,11 @@ import {
   type DailyMetrics,
 } from "../analytics/dailyMetrics";
 import { fetchNycWeather, type WeatherSummary } from "./weather";
+import {
+  loadWeeklyRollup as defaultLoadWeeklyRollup,
+  isMonday,
+  type WeeklyRollup,
+} from "./weeklyRollup";
 
 const SOURCE_DEFAULT = "cleancloud" as const;
 const FALLBACK_SUMMARY = "(브리핑 생성 실패 — 잠시 후 다시 시도)";
@@ -31,6 +36,14 @@ export interface RunDailyBriefingArgs {
   invokeLLMFn?: (messages: Message[]) => Promise<InvokeResult>;
   /** Inject for tests; production uses Open-Meteo via fetchNycWeather. */
   loadWeather?: (briefingDate: string) => Promise<WeatherSummary | null>;
+  /** Inject for tests; production uses DB. Only called when briefingDate
+   *  is a Monday (NYC). null override skips weekly entirely. */
+  loadWeeklyRollup?:
+    | ((args: {
+        briefingDate: string;
+        source: "cleancloud" | "dropshop_pos";
+      }) => Promise<WeeklyRollup>)
+    | null;
 }
 
 export interface RunDailyBriefingResult {
@@ -38,6 +51,7 @@ export interface RunDailyBriefingResult {
   summaryMarkdown: string;
   metrics: DailyMetrics;
   weather: WeatherSummary | null;
+  weeklyRollup: WeeklyRollup | null;
   llmModel: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
@@ -47,6 +61,7 @@ export interface RunDailyBriefingResult {
 export function buildBriefingPrompt(
   metrics: DailyMetrics,
   weather: WeatherSummary | null = null,
+  weekly: WeeklyRollup | null = null,
 ): Message[] {
   const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
   const sign = (pct: number) => (pct >= 0 ? `+${pct}` : `${pct}`);
@@ -130,6 +145,33 @@ export function buildBriefingPrompt(
       : `날씨: 데이터 없음`,
   ].join("\n");
 
+  // Monday-only weekly rollup facts. Folded as a separate block so the
+  // LLM can produce a clearly-marked "지난주 돌아보기" paragraph.
+  const weeklyFacts = weekly
+    ? [
+        "",
+        `─── 지난주 돌아보기 (${weekly.weekStartDate} → ${weekly.weekEndDate}, 7일) ───`,
+        `지난주 총 주문: ${weekly.orderCount}건`,
+        `지난주 총 매출: ${dollars(weekly.revenueCents)}`,
+        `지난주 평균 주문 금액: ${dollars(weekly.avgOrderCents)}`,
+        `지난주 유니크 손님 수: ${weekly.uniqueCustomerCount}명`,
+        `지난주 최대 단일 주문: ${dollars(weekly.largestOrderCents)}`,
+        weekly.vs4WeeksAgo.revenueDeltaPct !== null
+          ? `4주 전 같은 기간 대비 매출: ${sign(weekly.vs4WeeksAgo.revenueDeltaPct)}% (4주 전 ${dollars(weekly.vs4WeeksAgo.priorRevenueCents)})`
+          : `4주 전 같은 기간 대비 매출: 비교 불가 (4주 전 데이터 없음)`,
+        weekly.vs4WeeksAgo.orderCountDeltaPct !== null
+          ? `4주 전 같은 기간 대비 주문 수: ${sign(weekly.vs4WeeksAgo.orderCountDeltaPct)}% (4주 전 ${weekly.vs4WeeksAgo.priorOrderCount}건)`
+          : `4주 전 같은 기간 대비 주문 수: 비교 불가`,
+        `지난주 요일별 분포: ${weekly.byDayOfWeek
+          .map((d) => `${d.name}=${d.orderCount}건/${dollars(d.revenueCents)}`)
+          .join(", ")}`,
+      ].join("\n")
+    : "";
+
+  const weeklyRule = weekly
+    ? "\n- 오늘은 월요일이므로 daily 요약 다음에 \"### 지난주 돌아보기\" 서브헤더를 한 줄 둘고, 3~4문장으로 지난주 7일치를 요약하세요. 해드라인(총 매출 + 4주 전 대비 동향), 요일별 특이점 1개, 단골 vs 신규 구성(가능한 경우), 이번 주 운영 제안 1개. 4주 전 대비 매출 변동이 ±10%를 넘으면 반드시 수치로 언급."
+    : "";
+
   return [
     {
       role: "system",
@@ -146,12 +188,12 @@ export function buildBriefingPrompt(
         "- 같은 요일 평균 대비 매출/주문 변동이 ±20%를 넘으면 반드시 한 줄로 언급하세요.",
         "- 단골(재방문) 고객은 '단골' 또는 '재방문 고객'으로 부르고, 신규 고객은 '첫 방문 손님'으로 부르세요.",
         "- 데이터에 없는 사실은 절대 추측하지 마세요. 비교 불가 항목은 그렇다고 적으세요.",
-        "- 끝에 한 줄로 오늘 실행 가능한 운영 제안 1개.",
+        "- 끝에 한 줄로 오늘 실행 가능한 운영 제안 1개." + weeklyRule,
       ].join("\n"),
     },
     {
       role: "user",
-      content: `다음 데이터를 바탕으로 어제 매장 운영 요약을 작성해주세요:\n\n${facts}`,
+      content: `다음 데이터를 바탕으로 어제 매장 운영 요약을 작성해주세요:\n\n${facts}${weeklyFacts}`,
     },
   ];
 }
@@ -181,9 +223,23 @@ export async function runDailyBriefing(
   const loadWeather =
     args.loadWeather ?? ((d: string) => fetchNycWeather({ briefingDate: d }));
 
-  const [metrics, weather] = await Promise.all([
+  // Monday-only weekly rollup. Test injection can pass null to skip
+  // entirely; default uses the real DB loader.
+  const weeklyLoader =
+    args.loadWeeklyRollup === null
+      ? null
+      : (args.loadWeeklyRollup ?? defaultLoadWeeklyRollup);
+  const shouldLoadWeekly =
+    weeklyLoader !== null && isMonday(args.briefingDate);
+
+  const [metrics, weather, weeklyRollup] = await Promise.all([
     loadMetrics({ briefingDate: args.briefingDate, source }),
     loadWeather(args.briefingDate).catch(() => null),
+    shouldLoadWeekly
+      ? weeklyLoader({ briefingDate: args.briefingDate, source }).catch(
+          () => null,
+        )
+      : Promise.resolve(null),
   ]);
 
   let summaryMarkdown = FALLBACK_SUMMARY;
@@ -193,7 +249,7 @@ export async function runDailyBriefing(
   let errorMessage: string | null = null;
 
   try {
-    const messages = buildBriefingPrompt(metrics, weather);
+    const messages = buildBriefingPrompt(metrics, weather, weeklyRollup);
     const result = await invokeLLMFn(messages);
     const text = extractTextContent(result);
     if (text.length > 0) summaryMarkdown = text;
@@ -240,6 +296,7 @@ export async function runDailyBriefing(
     summaryMarkdown,
     metrics,
     weather,
+    weeklyRollup,
     llmModel,
     promptTokens,
     completionTokens,
