@@ -92,6 +92,15 @@ export function parseCleanCloudTimestamp(v: unknown): Date | null {
   }
   if (typeof v === "string") {
     if (v.startsWith("0000")) return null;
+    // Phase 25-verify-2: numeric-string Unix epoch (e.g. "1778846675").
+    // CleanCloud returns these as strings throughout; without this branch
+    // every `placedAt`/`paidAt` came back null.
+    if (/^\d{6,}$/.test(v)) {
+      const num = Number(v);
+      const ms = num < 1e12 ? num * 1000 : num;
+      const d = new Date(ms);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
     // "YYYY-MM-DD HH:MM:SS" (no T separator) → treat as UTC by appending Z.
     if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v)) {
       const d = new Date(`${v.replace(" ", "T")}Z`);
@@ -108,20 +117,60 @@ export function parseCleanCloudTimestamp(v: unknown): Date | null {
 }
 
 /**
- * Combine CleanCloud's `pickupDate` (date only) + `pickupStart` (HH:MM)
- * into a single UTC Date. Falls back to date-only if start time is missing.
+ * Combine CleanCloud's `pickupDate` / `deliveryDate` with optional time
+ * window string (`pickupTime` / `deliveryTime`) into a single UTC Date.
+ *
+ * Phase 25-verify-2 (real-shape fix): observed shapes are:
+ *   - `pickupDate`: Unix seconds (e.g. "1779192000") OR "YYYY-MM-DD"
+ *   - `pickupTime`: "6pm-8pm", "14:00-16:00", "0-0", ""
+ * If `date` is a Unix timestamp it already includes the slot start, so we
+ * use it as-is. If it's a date-only string we try to parse the time prefix
+ * (`6pm` → 18:00, `14:00` → 14:00) and combine; otherwise just date+midnight.
  */
 function combinePickupWindow(
   date: unknown,
-  startTime: unknown,
+  timeWindow: unknown,
 ): Date | null {
+  // Unix epoch (number or numeric string > 0) → already a full timestamp.
+  if (
+    typeof date === "number" ||
+    (typeof date === "string" && /^\d{6,}$/.test(date) && date !== "0")
+  ) {
+    return parseCleanCloudTimestamp(date);
+  }
   if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return parseCleanCloudTimestamp(date);
   }
-  if (typeof startTime !== "string" || !/^\d{2}:\d{2}/.test(startTime)) {
+  if (typeof timeWindow !== "string" || timeWindow === "" || timeWindow === "0-0") {
     return parseCleanCloudTimestamp(date);
   }
-  return parseCleanCloudTimestamp(`${date} ${startTime.slice(0, 5)}:00`);
+  // "6pm-8pm" → start "6pm" → 18:00
+  // "14:00-16:00" → start "14:00" → 14:00
+  const start = timeWindow.split("-")[0]?.trim() ?? "";
+  const hhmm = parseTimePrefix(start);
+  if (!hhmm) return parseCleanCloudTimestamp(date);
+  return parseCleanCloudTimestamp(`${date} ${hhmm}:00`);
+}
+
+function parseTimePrefix(s: string): string | null {
+  if (!s) return null;
+  // "14:00" or "14:00:00"
+  const m24 = s.match(/^(\d{1,2}):(\d{2})/);
+  if (m24) {
+    const hh = m24[1]!.padStart(2, "0");
+    return `${hh}:${m24[2]}`;
+  }
+  // "6pm", "6 pm", "6:30pm"
+  const m12 = s.toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
+  if (m12) {
+    let hh = Number(m12[1]);
+    const mm = m12[2] ?? "00";
+    const mer = m12[3]!;
+    if (mer === "pm" && hh < 12) hh += 12;
+    if (mer === "am" && hh === 12) hh = 0;
+    return `${String(hh).padStart(2, "0")}:${mm}`;
+  }
+  return null;
 }
 
 /**
@@ -142,70 +191,118 @@ export function normalizeUSPhoneToE164(raw: unknown): string | null {
 export function adaptCustomer(
   src: CleanCloudCustomer,
 ): InsertPosCustomer | null {
-  const externalId = toStringId(src.customerID);
+  // Phase 25-verify-2 (real-shape fix): CleanCloud `getCustomer` returns
+  // capitalised keys: ID, Name, Tel, Email, Address, Notes, plus camelCase
+  // marketingOptIn, loyaltyPointsAvailable, creditAvailable. Earlier code
+  // looked at `customerID/customerName/...` which never existed in real
+  // responses → every customer was dropped and the mirror stayed empty.
+  const s = src as unknown as Record<string, unknown>;
+  const externalId = toStringId(s.ID ?? s.customerID);
   if (!externalId) return null;
   const phoneRaw =
-    typeof src.customerTel === "string" && src.customerTel.length > 0
-      ? src.customerTel
-      : null;
+    typeof s.Tel === "string" && s.Tel.length > 0
+      ? (s.Tel as string)
+      : typeof s.customerTel === "string" && (s.customerTel as string).length > 0
+        ? (s.customerTel as string)
+        : null;
   const phoneE164 = normalizeUSPhoneToE164(phoneRaw);
+  const name =
+    (typeof s.Name === "string" && (s.Name as string)) ||
+    (typeof s.customerName === "string" && (s.customerName as string)) ||
+    null;
+  const email =
+    (typeof s.Email === "string" && (s.Email as string).length > 0
+      ? (s.Email as string)
+      : null) ??
+    (typeof s.customerEmail === "string" && (s.customerEmail as string).length > 0
+      ? (s.customerEmail as string)
+      : null);
+  const address =
+    (typeof s.Address === "string" && (s.Address as string).length > 0
+      ? (s.Address as string)
+      : null) ??
+    (typeof s.customerAddress === "string" && (s.customerAddress as string).length > 0
+      ? (s.customerAddress as string)
+      : null);
+  const notes =
+    (typeof s.Notes === "string" && (s.Notes as string).length > 0
+      ? (s.Notes as string)
+      : null) ??
+    (typeof s.customerNotes === "string" && (s.customerNotes as string).length > 0
+      ? (s.customerNotes as string)
+      : null);
   return {
     source: SOURCE,
     externalId,
-    name: typeof src.customerName === "string" ? src.customerName : null,
+    name,
     phoneE164,
     phoneRaw,
-    email:
-      typeof src.customerEmail === "string" && src.customerEmail.length > 0
-        ? src.customerEmail
-        : null,
-    address:
-      typeof src.customerAddress === "string" && src.customerAddress.length > 0
-        ? src.customerAddress
-        : null,
-    notes:
-      typeof src.customerNotes === "string" && src.customerNotes.length > 0
-        ? src.customerNotes
-        : null,
-    marketingOptIn: toBoolInt(src.marketingOptIn),
-    loyaltyPoints: toIntSafe(src.loyaltyPoints, 0),
-    creditCents: toCents(src.credit),
+    email,
+    address,
+    notes,
+    marketingOptIn: toBoolInt(s.marketingOptIn),
+    loyaltyPoints: toIntSafe(s.loyaltyPointsAvailable ?? s.loyaltyPoints, 0),
+    creditCents: toCents(s.creditAvailable ?? s.credit),
     rawPayload: src as unknown,
   };
 }
 
 export function adaptOrder(src: CleanCloudOrder): InsertPosOrder | null {
-  const externalId = toStringId(src.orderID);
+  // Phase 25-verify-2 (real-shape fix): observed `getOrders` payload uses
+  // `id` (not orderID), `total` (not finalTotal), `notes` (not orderNotes),
+  // `createdDate` for placedAt, `pickupDate/Time` Unix-epoch + slot string,
+  // and embedded `products[].pricePerUnit`. Previously every order's id
+  // looked up the missing `orderID` key, returned null, and got dropped.
+  const s = src as unknown as Record<string, unknown>;
+  const externalId = toStringId(s.id ?? s.orderID);
   if (!externalId) return null;
-  const itemsSummary = Array.isArray(src.products)
-    ? src.products.map((p) => ({
+  const productsRaw = (s.products ?? []) as Array<Record<string, unknown>>;
+  const itemsSummary = Array.isArray(productsRaw)
+    ? productsRaw.map((p) => ({
         externalId: toStringId(p.id) ?? null,
-        name: typeof p.name === "string" ? p.name : null,
-        priceCents: toCents(p.price),
+        name: typeof p.name === "string" ? (p.name as string) : null,
+        priceCents: toCents(p.pricePerUnit ?? p.price),
         quantity: toIntSafe(p.quantity ?? p.pieces, 1),
       }))
     : [];
+  const totalRaw = s.total ?? s.finalTotal;
+  const isCompleted =
+    s.completed === 1 ||
+    s.completed === "1" ||
+    (typeof s.completedDate !== "undefined" &&
+      s.completedDate !== "0" &&
+      s.completedDate !== 0 &&
+      s.completedDate !== null &&
+      s.completedDate !== "");
   return {
     source: SOURCE,
     externalId,
-    customerExternalId: toStringId(src.customerID),
-    status: mapCleanCloudOrderStatus(src.status),
+    customerExternalId: toStringId(s.customerID),
+    status: mapCleanCloudOrderStatus(s.status as number | undefined),
     sourceStatusRaw:
-      src.status === undefined || src.status === null
+      s.status === undefined || s.status === null
         ? null
-        : String(src.status),
-    finalTotalCents: toCents(src.finalTotal),
-    paid: toBoolInt(src.paid),
-    completed: toBoolInt(src.completed),
-    express: toBoolInt(src.express),
-    placedAt: parseCleanCloudTimestamp(src.storeDropOffDate) ?? null,
-    pickupAt: combinePickupWindow(src.pickupDate, src.pickupStart) ?? null,
+        : String(s.status),
+    finalTotalCents: toCents(totalRaw),
+    paid: toBoolInt(s.paid),
+    completed: isCompleted ? 1 : 0,
+    express: toBoolInt(s.express),
+    // Prefer createdDate (real placed-at). Fall back to storeDropOffDate for
+    // any future API change that re-introduces it.
+    placedAt:
+      parseCleanCloudTimestamp(s.createdDate) ??
+      parseCleanCloudTimestamp(s.storeDropOffDate) ??
+      null,
+    pickupAt:
+      combinePickupWindow(s.pickupDate, s.pickupTime ?? s.pickupStart) ?? null,
     deliveryAt:
-      combinePickupWindow(src.deliveryDate, src.deliveryStart) ?? null,
+      combinePickupWindow(s.deliveryDate, s.deliveryTime ?? s.deliveryStart) ?? null,
     notes:
-      typeof src.orderNotes === "string" && src.orderNotes.length > 0
-        ? src.orderNotes
-        : null,
+      typeof s.notes === "string" && (s.notes as string).length > 0
+        ? (s.notes as string)
+        : typeof s.orderNotes === "string" && (s.orderNotes as string).length > 0
+          ? (s.orderNotes as string)
+          : null,
     itemsSummary,
     rawPayload: src as unknown,
   };
@@ -222,54 +319,62 @@ export function adaptOrder(src: CleanCloudOrder): InsertPosOrder | null {
 export function extractPaymentsFromOrder(
   src: CleanCloudOrder,
 ): InsertPosPayment[] {
-  const orderExternalId = toStringId(src.orderID);
+  // Phase 25-verify-2 (real-shape fix): same key migration as adaptOrder.
+  // CleanCloud's getOrders does NOT include an embedded payments[] array
+  // in the responses we've observed; instead each order has top-level
+  // paid/paymentType/paymentTime/total. We synthesize one implicit payment
+  // row per paid order using `paymentTime` (Unix seconds) for paidAt.
+  const s = src as unknown as Record<string, unknown>;
+  const orderExternalId = toStringId(s.id ?? s.orderID);
   if (!orderExternalId) return [];
-  const customerExternalId = toStringId(src.customerID);
+  const customerExternalId = toStringId(s.customerID);
 
-  const arr = (src as Record<string, unknown>).payments;
+  const arr = s.payments;
   if (Array.isArray(arr) && arr.length > 0) {
     const out: InsertPosPayment[] = [];
     for (const raw of arr) {
       if (!raw || typeof raw !== "object") continue;
       const p = raw as Record<string, unknown>;
-      const externalId = toStringId(p.paymentID);
+      const externalId = toStringId(p.paymentID ?? p.id);
       if (!externalId) continue;
       out.push({
         source: SOURCE,
         externalId,
         orderExternalId,
         customerExternalId,
-        amountCents: toCents(p.paymentAmount),
+        amountCents: toCents(p.paymentAmount ?? p.amount),
         type: mapCleanCloudPaymentType(p.paymentType),
         sourceTypeRaw:
           p.paymentType === undefined || p.paymentType === null
             ? null
             : String(p.paymentType),
         refunded: toBoolInt(p.refunded),
-        paidAt: parseCleanCloudTimestamp(p.paymentDate) ?? null,
+        paidAt:
+          parseCleanCloudTimestamp(p.paymentDate ?? p.paymentTime) ?? null,
         rawPayload: p as unknown,
       });
     }
     return out;
   }
 
-  // Fallback: paid=1 → synthesize one payment row keyed by orderID so that
-  // re-pulling the same order is idempotent.
-  if (toBoolInt(src.paid) === 1 && toCents(src.finalTotal) > 0) {
+  // Fallback: paid=1 + total > 0 → synthesize one implicit payment.
+  const totalRaw = s.total ?? s.finalTotal;
+  if (toBoolInt(s.paid) === 1 && toCents(totalRaw) > 0) {
     return [
       {
         source: SOURCE,
         externalId: `order-${orderExternalId}-implicit`,
         orderExternalId,
         customerExternalId,
-        amountCents: toCents(src.finalTotal),
-        type: mapCleanCloudPaymentType(src.paymentType),
+        amountCents: toCents(totalRaw),
+        type: mapCleanCloudPaymentType(s.paymentType),
         sourceTypeRaw:
-          src.paymentType === undefined || src.paymentType === null
+          s.paymentType === undefined || s.paymentType === null
             ? null
-            : String(src.paymentType),
+            : String(s.paymentType),
         refunded: 0,
-        paidAt: parseCleanCloudTimestamp(src.storeDropOffDate) ?? null,
+        paidAt:
+          parseCleanCloudTimestamp(s.paymentTime ?? s.createdDate ?? s.storeDropOffDate) ?? null,
         rawPayload: { _inferred: true, source: src } as unknown,
       },
     ];
@@ -281,20 +386,26 @@ export function adaptProduct(
   src: CleanCloudProduct,
   priceListExternalId?: string | null,
 ): InsertPosProduct | null {
-  const externalId = toStringId(src.productID);
+  // Phase 25-verify-2 (real-shape fix): real `getProducts` payload uses
+  // `id` (not productID), `parent` (not parentID), no `category` field —
+  // there's `section` instead. Earlier code dropped every product.
+  const s = src as unknown as Record<string, unknown>;
+  const externalId = toStringId(s.id ?? s.productID);
   if (!externalId) return null;
   return {
     source: SOURCE,
     externalId,
     priceListExternalId:
-      priceListExternalId ?? toStringId(src.priceListID),
-    name: typeof src.name === "string" && src.name.length > 0 ? src.name : "",
+      priceListExternalId ?? toStringId(s.priceListID),
+    name: typeof s.name === "string" && (s.name as string).length > 0 ? (s.name as string) : "",
     category:
-      typeof src.category === "string" && src.category.length > 0
-        ? src.category
-        : null,
-    priceCents: toCents(src.price),
-    parentExternalId: toStringId(src.parentID),
+      typeof s.category === "string" && (s.category as string).length > 0
+        ? (s.category as string)
+        : typeof s.section === "string" && (s.section as string).length > 0
+          ? (s.section as string)
+          : null,
+    priceCents: toCents(s.price),
+    parentExternalId: toStringId(s.parent ?? s.parentID),
     rawPayload: src as unknown,
   };
 }
@@ -308,5 +419,6 @@ export function readPriceListId(
   pl: CleanCloudPriceList | undefined,
 ): string | null {
   if (!pl) return null;
-  return toStringId(pl.priceListID);
+  const p = pl as unknown as Record<string, unknown>;
+  return toStringId(p.id ?? p.priceListID);
 }

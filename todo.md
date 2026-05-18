@@ -673,3 +673,21 @@ Deferred as nits (low value, not for this PR):
 Pre-existing failures (unaffected by this PR — verified at file-level git log):
 - 6× `client/src/hooks/useSimpleMode.test.tsx` jsdom localStorage gap (from Phase 22a / 6b786b1).
 - 2× `server/customerProfile.test.ts` requires real `DATABASE_URL` (not configured in local sandbox).
+
+
+## Phase 25-verify-2 (real-shape adapter fix) — 2026-05-18 04:20 UTC
+
+- [x] Diagnosed: 25v shipped windowing/envelope fixes but adapter.ts used invented keys (`orderID`, `customerName`, `productID`) instead of real CleanCloud response keys (`id`, `Name`, `id`). Every row was dropped at adaptOrder/adaptCustomer/adaptProduct → mirror stayed empty even after backfill ran successfully.
+- [x] Captured real response shapes for orders/customers/products from production CleanCloud API.
+- [x] Rewrote `adaptCustomer` (ID/Name/Tel/Email/Address/Notes/loyaltyPointsAvailable/creditAvailable + camelCase fallback).
+- [x] Rewrote `adaptOrder` (id/total/notes/createdDate/pickupDate+pickupTime/products[].pricePerUnit + completedDate→completed derivation).
+- [x] Rewrote `extractPaymentsFromOrder` (synth implicit row from paymentTime/paymentType/total when paid=1, removed reliance on non-existent payments[]).
+- [x] Rewrote `adaptProduct` (id/parent/section + price + camelCase fallback).
+- [x] `parseCleanCloudTimestamp` now accepts numeric-string Unix epochs (`"1778846675"`) — previously string regex required date format → all `placedAt`/`paidAt` came back null.
+- [x] tsc clean, vitest 520 passed / 9 skipped, adapter tests 20/20 green (kept backward-compat with old fixtures via `s.id ?? s.orderID` fallback).
+- [x] Cleared stale `posSyncLog` rows + ran 12-month backfill from sandbox (`scripts/run-backfill-12m.mjs`) — 145s, customers 679 / orders 26,968 / payments 19,858 / products 95, 0 errors, all sync_log rows finished.
+- [x] DB final: 668 customers / 23,257 orders / 17,251 payments / 95 products (dedup via `(source, externalId)` unique index — expected).
+- [x] Manually regenerated 5/16 daily briefing → real metrics ($1,690.71 revenue, 59 orders, 34 unique customers) → LLM (gemini-2.5-flash) returned Korean summary with day-over-day deltas + actionable suggestion.
+- [ ] User: republish so production cron picks up the adapter fix.
+- [ ] Follow-up: dailyMetrics says "all 34 customers are new" even after 12-month backfill — investigate `newCustomerCount` logic (likely uses `posCustomers.firstOrderAt` which we never populated during backfill).
+- [ ] Follow-up: 95 product rows all flagged as "changes" on first import — first-load noise, suppress in PriceDriftDigest until first stable day.
