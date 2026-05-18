@@ -78,6 +78,12 @@ export const aggregateRevenue: ToolDefinition<RevenueInput, RevenueOutput> = {
     "기간 내 매출을 day / week / month / dayOfWeek 단위로 집계. dateFrom/To는 ISO. 기본은 paid=1만 매출에 포함. includeUnpaid=true면 미결제 주문도 포함.",
   inputSchema: revenueInput,
   outputSchema: revenueOutput,
+  argsExample: {
+    dateFrom: "2026-04-01T00:00:00Z",
+    dateTo: "2026-05-01T00:00:00Z",
+    groupBy: "day",
+    includeUnpaid: false,
+  },
   async invoke(input) {
     const db = await getDb();
     if (!db)
@@ -144,6 +150,10 @@ export const aggregateNewCustomers: ToolDefinition<
     "기간 내에 처음 주문한 신규 손님 목록. 신규 = 그 손님의 가장 이른 주문이 dateFrom~dateTo 안에 있는 경우.",
   inputSchema: newCustomersInput,
   outputSchema: newCustomersOutput,
+  argsExample: {
+    dateFrom: "2026-05-01T00:00:00Z",
+    dateTo: "2026-05-18T00:00:00Z",
+  },
   async invoke(input) {
     const db = await getDb();
     if (!db) return { count: 0, customers: [] };
@@ -230,6 +240,12 @@ export const aggregateRepeatCustomers: ToolDefinition<RepeatInput, RepeatOutput>
     "단골 손님 (lookbackDays 안에 minVisits번 이상 방문). dateFrom~To 기간 내 주문이 있는 사람만 카운트. 방문수 desc 정렬.",
   inputSchema: repeatInput,
   outputSchema: repeatOutput,
+  argsExample: {
+    dateFrom: "2026-05-01T00:00:00Z",
+    dateTo: "2026-05-18T00:00:00Z",
+    minVisits: 2,
+    lookbackDays: 90,
+  },
   async invoke(input, ctx) {
     const db = await getDb();
     if (!db) return { count: 0, customers: [] };
@@ -337,6 +353,11 @@ export const findInactiveCustomers: ToolDefinition<InactiveInput, InactiveOutput
     "최근 N일 동안 방문 안 한 손님 (이전엔 minPriorVisits번 이상 방문). 재방문 권유 타겟 리스트. 최근 방문 desc 정렬.",
   inputSchema: inactiveInput,
   outputSchema: inactiveOutput,
+  argsExample: {
+    inactiveSinceDays: 60,
+    minPriorVisits: 3,
+    limit: 50,
+  },
   async invoke(input, ctx) {
     const db = await getDb();
     if (!db) return { customers: [] };

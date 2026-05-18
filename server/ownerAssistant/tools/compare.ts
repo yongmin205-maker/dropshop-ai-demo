@@ -165,6 +165,11 @@ export const compareTimeWindows: ToolDefinition<Input, Output> = {
     "두 시간 구간(windowA, windowB)을 같은 지표(매출/주문수/신규손님수/단골재방문수)로 비교. delta + deltaPct + 한국어 한 줄 요약 반환.",
   inputSchema: input,
   outputSchema: output,
+  argsExample: {
+    windowA: { from: "2026-04-01T00:00:00Z", to: "2026-05-01T00:00:00Z" },
+    windowB: { from: "2026-05-01T00:00:00Z", to: "2026-06-01T00:00:00Z" },
+    metric: "revenue",
+  },
   async invoke(args) {
     const a = await computeMetric(
       new Date(args.windowA.from),

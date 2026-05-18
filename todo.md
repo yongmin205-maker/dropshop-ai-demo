@@ -691,3 +691,35 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [ ] User: republish so production cron picks up the adapter fix.
 - [ ] Follow-up: dailyMetrics says "all 34 customers are new" even after 12-month backfill — investigate `newCustomerCount` logic (likely uses `posCustomers.firstOrderAt` which we never populated during backfill).
 - [ ] Follow-up: 95 product rows all flagged as "changes" on first import — first-load noise, suppress in PriceDriftDigest until first stable day.
+
+
+## Phase 25-enrich (Daily Briefing 강화 + Owner Assistant fix) — 2026-05-18
+
+### Owner Assistant bug
+- [ ] Diagnose `compareTimeWindows` zod failure: planner produced `{}` args. Reconcile tool JSON-Schema description with zod input schema; add explicit example windows in tool description; add planner default windows for "지난 달 vs 이번 달" intent.
+- [ ] Vitest contract: planner output for "지난 달 대비 이번 달 매출" must include `windowA`, `windowB`, valid `metric`.
+
+### Customer characteristics
+- [ ] Add columns to `posCustomers`: `firstOrderAt` (number, ms), `lastOrderAt` (number, ms), `lifetimeOrders` (int), `lifetimeRevenueCents` (int).
+- [ ] Migration via `pnpm db:push`.
+- [ ] Backfill rollups from existing 23,257 orders (one-shot script that aggregates per customerExternalId).
+- [ ] Adjust `pullOrders` daily flow to incrementally update these rollups.
+
+### Daily metrics enrichment
+- [ ] `returningCustomerCount` = unique `customerExternalId` whose `firstOrderAt < periodStartMs`.
+- [ ] `serviceMix`: parse `posOrderItems` (or order.products[]) → group by normalized category (Shirts / Wash & Fold / Dry Clean / Alterations / Other), output {category, orderCount, revenueCents}.
+- [ ] `hourlyDistribution`: 24-bucket array of order count by NYC hour.
+- [ ] `dayOfWeekVsAvg`: revenue & order count vs same-DOW 4-week trailing average (% delta).
+- [ ] `topReturningCustomers`: top 3 spenders that day with their `lifetimeOrders` and `lifetimeRevenueCents`.
+
+### Weather hook
+- [ ] Open-Meteo NYC daily fetch (40.7128, -74.0060) for `briefingDate` (no API key needed). Persist `weatherSummary: { tempHighC, tempLowC, precipMm, conditionCode }` on briefing row.
+- [ ] Cache: don't re-fetch if already saved.
+
+### LLM prompt rewrite
+- [ ] `buildBriefingPrompt` injects all new fields; system prompt asks LLM to (1) call out anomalies vs DOW avg, (2) call out service mix shifts, (3) reference weather only if it correlates with an unusual pattern, (4) keep returning-customer language ("단골 N명") distinct from new.
+
+### Validation
+- [ ] tsc clean, full vitest green.
+- [ ] Regen 5/16 briefing from sandbox; manually inspect that output references service mix + DOW comparison + weather context.
+- [ ] Republish; user verifies in production UI.

@@ -50,6 +50,11 @@ export type ToolDefinition<TIn, TOut> = {
   description: string;
   inputSchema: z.ZodType<TIn>;
   outputSchema: z.ZodType<TOut>;
+  /** Concrete literal example of the args the Planner should produce.
+   *  Surfaced verbatim in the Planner prompt so the LLM has a working
+   *  template to copy field names + value shapes from. Without this
+   *  the Planner LLM can emit `{}` and the Executor zod-fails. */
+  argsExample: TIn;
   invoke(input: TIn, ctx: AgentContext): Promise<TOut>;
 };
 

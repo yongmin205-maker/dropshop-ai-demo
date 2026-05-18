@@ -53,10 +53,12 @@ export function toolCatalogueForPrompt(): Array<{
   name: ToolName;
   category: string;
   description: string;
+  argsExample: unknown;
 }> {
   return Object.values(TOOL_REGISTRY).map((t) => ({
     name: t.name,
     category: t.category,
     description: t.description,
+    argsExample: t.argsExample,
   }));
 }

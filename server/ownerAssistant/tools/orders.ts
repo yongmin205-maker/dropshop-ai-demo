@@ -56,6 +56,7 @@ export const getCustomerRecentOrders: ToolDefinition<RecentInput, RecentOutput> 
     "특정 손님의 최근 주문 목록 (최신순). externalId는 posCustomers.externalId. limit 기본 10.",
   inputSchema: recentInput,
   outputSchema: recentOutput,
+  argsExample: { externalId: "1819", limit: 10 },
   async invoke(input) {
     const db = await getDb();
     if (!db) return { orders: [] };
@@ -93,6 +94,7 @@ export const getOrderDetails: ToolDefinition<DetailsInput, DetailsOutput> = {
     "주문 외부 ID로 단일 주문 상세 (상태, 금액, 픽업 시간, 메모, 아이템 목록).",
   inputSchema: detailsInput,
   outputSchema: detailsOutput,
+  argsExample: { externalId: "62379" },
   async invoke(input) {
     const db = await getDb();
     if (!db) return { order: null };
@@ -128,6 +130,7 @@ export const getActiveOrdersByStatus: ToolDefinition<ActiveInput, ActiveOutput> 
     "주어진 상태의 주문을 매장 전체에서 조회. 예: 'ready' = 픽업 대기, 'cleaning' = 작업 중. limit 기본 50, 같이 totalCount(전체 매칭 개수)도 반환.",
   inputSchema: activeInput,
   outputSchema: activeOutput,
+  argsExample: { status: "ready", limit: 50 },
   async invoke(input) {
     const db = await getDb();
     if (!db) return { orders: [], totalCount: 0 };

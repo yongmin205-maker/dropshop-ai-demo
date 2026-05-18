@@ -57,17 +57,22 @@ const OUTPUT_SCHEMA = {
 function basePrompt(now: Date): string {
   const isoNow = now.toISOString();
   const catalogue = toolCatalogueForPrompt()
-    .map((t) => `- ${t.name} (${t.category}): ${t.description}`)
+    .map(
+      (t) =>
+        `- ${t.name} (${t.category}): ${t.description}\n  args 예시: ${JSON.stringify(t.argsExample)}`,
+    )
     .join("\n");
   return `당신은 매장 점주 질문에 답하기 위한 tool 호출 계획을 세웁니다.
 오늘 시각: ${isoNow} (UTC).
 
-사용 가능한 tool 목록:
+사용 가능한 tool 목록 (각 tool 아래에 args 예시가 함께 있습니다):
 ${catalogue}
 
 규칙:
 - 최대 ${MAX_PLAN_STEPS}개 tool 호출까지. 짧을수록 좋음.
-- args는 각 tool의 입력 스키마에 맞는 literal 값. 날짜는 ISO 8601 (UTC).
+- 각 step의 args는 위 "args 예시"와 **같은 필드명/형태**로 채워라. argsExample이 {}인 tool(countActiveGarments, aggregateRevenueLive)을 제외하고는 절대 빈 객체 {}를 반환하지 말 것.
+- 날짜/시간 값은 모두 ISO 8601 UTC ("2026-05-18T00:00:00Z" 형식). "지난주", "이번 달" 같은 한국어 표현은 오늘 시각 기준으로 ISO로 변환해서 채워라. 예: 오늘이 5/18이면 "이번 달"=2026-05-01~2026-06-01, "지난 달"=2026-04-01~2026-05-01.
+- compareTimeWindows의 windowA/windowB는 각각 {from, to} 객체로 두 기간을 채워라. metric은 revenue/order_count/new_customer_count/repeat_visit_count 중 하나.
 - 같은 tool을 두 번 부르지 말 것 — 같은 데이터를 두 번 가져오지 않음.
 - aggregate 질문에 lookup tool을 쓰지 말 것. lookup 질문에 aggregate tool을 쓰지 말 것.
 - "오늘" / "방금 영업 중"이 아닌 과거 기간 질문에는 mirror tools (aggregateRevenue 등)를 쓸 것. live tools는 오늘자 전용.

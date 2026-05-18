@@ -73,6 +73,7 @@ export const findCustomerByPhoneOrName: ToolDefinition<Input, Output> = {
     "전화번호, 이름, 또는 이메일로 단일 손님을 검색한다. 정확한 일치가 아니어도 부분 일치(LIKE)로 찾는다. 최대 10명까지 반환.",
   inputSchema,
   outputSchema,
+  argsExample: { query: "Kim" },
   async invoke(input) {
     const db = await getDb();
     if (!db) return { customers: [], truncated: false };

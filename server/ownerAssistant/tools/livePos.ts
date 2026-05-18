@@ -92,6 +92,7 @@ export const fetchLiveOrder: ToolDefinition<
     "CleanCloud에 직접 물어 단일 주문의 실시간 상태를 가져온다. mirror가 아직 못 따라잡은 오늘자 주문 상태 확인용. 어제 이전 데이터는 mirror tools를 쓸 것.",
   inputSchema: fetchLiveOrderInput,
   outputSchema: fetchLiveOrderOutput,
+  argsExample: { externalId: "62379" },
   async invoke(input) {
     const t = await getLiveTransport();
     if (!t || typeof t.getOrder !== "function") return unavailable;
@@ -125,6 +126,7 @@ export const countActiveGarments: ToolDefinition<CountInput, CountOutput> = {
     "지금 매장에서 작업 중인 의류 총 개수를 실시간으로 카운트. 오늘 영업 중 'WIP 얼마나 남았어' 류 질문 전용.",
   inputSchema: countInput,
   outputSchema: countOutput,
+  argsExample: {},
   async invoke() {
     const t = await getLiveTransport();
     if (!t || typeof t.listActiveOrders !== "function") return unavailable;
@@ -201,6 +203,7 @@ export const aggregateRevenueLive: ToolDefinition<
     "오늘 03:00 ET pull 이후 ~ 지금까지의 매출. mirror에 아직 없는 오늘자 데이터를 실시간으로 가져옴. 어제 이전 기간은 aggregateRevenue를 쓸 것.",
   inputSchema: liveRevenueInput,
   outputSchema: liveRevenueOutput,
+  argsExample: {},
   async invoke(_input, ctx: AgentContext) {
     const t = await getLiveTransport();
     if (!t || typeof t.aggregateTodayRevenue !== "function") return unavailable;

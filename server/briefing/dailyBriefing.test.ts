@@ -35,6 +35,29 @@ function metricsFixture(overrides: Partial<DailyMetrics> = {}): DailyMetrics {
     topSpenders: [
       { externalId: "cust-aaa-bbb", revenueCents: 8500, orderCount: 1 },
     ],
+    topSpenderProfiles: [
+      {
+        externalId: "cust-aaa-bbb",
+        revenueCents: 8500,
+        orderCount: 1,
+        lifetimeOrderCount: 14,
+        lifetimeRevenueCents: 120000,
+        firstOrderAt: "2025-09-01T12:00:00.000Z",
+        lastOrderAt: "2026-05-14T18:00:00.000Z",
+        isReturning: true,
+      },
+    ],
+    serviceMix: [
+      { category: "Shirts", quantity: 18, revenueCents: 9000 },
+      { category: "Drycleaning", quantity: 6, revenueCents: 7800 },
+      { category: "Wash & Fold", quantity: 4, revenueCents: 4400 },
+    ],
+    hourlyDistribution: [
+      { hour: 9, orderCount: 2, revenueCents: 4000 },
+      { hour: 10, orderCount: 5, revenueCents: 11000 },
+      { hour: 17, orderCount: 5, revenueCents: 9500 },
+    ],
+    peakHour: 10,
     ...overrides,
   };
 }
@@ -102,8 +125,62 @@ describe("buildBriefingPrompt", () => {
   });
 
   it("falls back to placeholder when no top spenders", () => {
-    const messages = buildBriefingPrompt(metricsFixture({ topSpenders: [] }));
-    expect(messages[1].content).toContain("상위 고객 데이터 없음");
+    const messages = buildBriefingPrompt(
+      metricsFixture({ topSpenders: [], topSpenderProfiles: [] }),
+    );
+    expect(messages[1].content).toContain("상위 고객: 데이터 없음");
+  });
+
+  it("surfaces service mix with quantity and dollars", () => {
+    const userContent = buildBriefingPrompt(metricsFixture())[1].content as string;
+    expect(userContent).toContain("서비스 믹스 (상위 3)");
+    expect(userContent).toContain("Shirts 18점/$90.00");
+    expect(userContent).toContain("Drycleaning");
+    expect(userContent).toContain("Wash & Fold");
+  });
+
+  it("emits empty-state mix line when no line items parsed", () => {
+    const userContent = buildBriefingPrompt(metricsFixture({ serviceMix: [] }))[1]
+      .content as string;
+    expect(userContent).toContain("line item 데이터 없음");
+  });
+
+  it("reports peak hour in Korean morning/afternoon format", () => {
+    const userContent = buildBriefingPrompt(metricsFixture())[1].content as string;
+    expect(userContent).toContain("피크 시간: 오전 10시 (5건)");
+  });
+
+  it("reports peak-hour empty state when no orders", () => {
+    const userContent = buildBriefingPrompt(
+      metricsFixture({ peakHour: null, hourlyDistribution: [], orderCount: 0 }),
+    )[1].content as string;
+    expect(userContent).toContain("피크 시간: 주문 없음");
+  });
+
+  it("tags lifetime info on returning top spenders", () => {
+    const userContent = buildBriefingPrompt(metricsFixture())[1].content as string;
+    // "단골 (전체 14건/$1200.00)"
+    expect(userContent).toContain("단골 (전체 14건/$1200.00)");
+  });
+
+  it("tags new customers as 신규 on top spenders", () => {
+    const userContent = buildBriefingPrompt(
+      metricsFixture({
+        topSpenderProfiles: [
+          {
+            externalId: "cust-new-001",
+            revenueCents: 5000,
+            orderCount: 1,
+            lifetimeOrderCount: 1,
+            lifetimeRevenueCents: 5000,
+            firstOrderAt: "2026-05-15T10:00:00.000Z",
+            lastOrderAt: "2026-05-15T10:00:00.000Z",
+            isReturning: false,
+          },
+        ],
+      }),
+    )[1].content as string;
+    expect(userContent).toMatch(/cust-new\b.*· 신규/);
   });
 });
 
