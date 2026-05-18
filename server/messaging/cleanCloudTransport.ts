@@ -294,11 +294,20 @@ export async function getCustomer(
     if (Array.isArray(r.customers)) {
       return { ok: true, data: r.customers as CleanCloudCustomer[] };
     }
-    // Single-customer mode → the customer fields live on the envelope itself
-    // (Success + fields). Strip "Success" so callers see a clean customer.
+    // Phase 25-verify fix (Agent A finding 3): if neither array is present
+    // AND the envelope carries no customer fields (just Success / Error),
+    // this is an empty date-range result — return [] so the backfill's
+    // `Array.isArray(result.data) ? data : [data]` wrap doesn't synthesize
+    // a phantom one-row array `[{}]`. Pre-fix that fake row inflated
+    // posSyncLog.rowsFetched to 1 for every empty customer window on the
+    // friend's store, lying about coverage.
     const { Success: _omit, Error: _omit2, ...rest } = r;
     void _omit;
     void _omit2;
+    if (Object.keys(rest).length === 0) {
+      return { ok: true, data: [] as CleanCloudCustomer[] };
+    }
+    // Single-customer mode → the customer fields live on the envelope itself.
     return { ok: true, data: rest as CleanCloudCustomer };
   }
   return decodeEnvelope<CleanCloudCustomer>(json, status, bodyText, "Customer");
