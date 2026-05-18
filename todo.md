@@ -617,3 +617,14 @@ SUPERSEDED — Claude Code took on Phase 25c instead; Phase 25b was rebuilt dire
 - [x] Heartbeat cron `dropshop-daily-briefing` already live at 12:00 UTC daily; task_uid 5wdNx6YKseqreEiHJrGx9y
 - [x] checkpoint 2cbd0d08 saved
 - [ ] user clicks Publish so production picks up the new handler (next cron fire = 2026-05-17 12:00 UTC if published in time)
+
+
+## Phase 25-verify (2026-05-17) — post-publish health + backfill + briefing
+
+User direction (2026-05-17): "눌렀어. backfill 하고, 지금 AI summary 이거 작동 돼? 다 해. 클로드 코드 시킬 todo 만들어줘"
+
+- [ ] 25v-1 · Production health probe — confirm `/api/scheduled/cleancloud-daily-pull` and `/api/scheduled/daily-briefing` return 200/401/405 (not 404) on dropshopai-vx45nyzf.manus.space
+- [ ] 25v-2 · Trigger backfill 12 months — either (a) sandbox hits production scheduled handler, or (b) instruct user to click `posMirror.runBackfill({monthsBack: 12})` in admin UI
+- [ ] 25v-3 · After backfill rows land in `posOrders` / `posCustomers` / `posPayments`, trigger `briefing.generateNow` and inspect Korean LLM output
+- [ ] 25v-4 · Author `docs/mainstreet-ai/claude_code_prompts/phase25d_admin_mirror_dashboard.md` — self-contained prompt
+- [ ] 25v-5 · Checkpoint + push + report status to user

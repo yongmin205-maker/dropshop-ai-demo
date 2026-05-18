@@ -44,6 +44,7 @@ import { useVisiblePollInterval } from "@/hooks/useVisiblePollInterval";
 import { useSimpleMode } from "@/hooks/useSimpleMode";
 import { SimpleModeToggle } from "@/components/SimpleModeToggle";
 import { DailyBriefingPanel } from "@/components/DailyBriefingPanel";
+import { PosMirrorPanel } from "@/components/PosMirrorPanel";
 import { ApprovalQueue } from "./dropshop/ApprovalQueue";
 import { intentTone } from "./dropshop/intentTone";
 import { Link } from "wouter";
@@ -335,6 +336,7 @@ export default function Home() {
               <TabsTrigger value="rag">RAG Memory</TabsTrigger>
               {isAdmin && <TabsTrigger value="errors">Errors</TabsTrigger>}
               {isAdmin && <TabsTrigger value="briefing">브리핑</TabsTrigger>}
+              {isAdmin && <TabsTrigger value="posMirror">POS 미러</TabsTrigger>}
               <Link
                 href="/owner-chat"
                 className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -377,6 +379,11 @@ export default function Home() {
             {isAdmin && (
               <TabsContent forceMount value="briefing" className="mt-3 data-[state=inactive]:hidden">
                 <DailyBriefingPanel />
+              </TabsContent>
+            )}
+            {isAdmin && (
+              <TabsContent forceMount value="posMirror" className="mt-3 data-[state=inactive]:hidden">
+                <PosMirrorPanel />
               </TabsContent>
             )}
           </Tabs>
