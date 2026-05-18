@@ -109,6 +109,10 @@ function makeDeps(overrides: Partial<PullJobDeps> = {}) {
     finishSyncLog: vi.fn(async (id, patch) => {
       calls.syncFinishes.push({ id, patch });
     }),
+    // Phase 25-enrich-2: existing tests don't exercise the catch-up phase.
+    // Pass `null` so the catch-up step is skipped by default; the dedicated
+    // catch-up test below opts in explicitly.
+    runCustomerCatchup: null,
     ...overrides,
   };
   return { deps, calls };
@@ -204,5 +208,40 @@ describe("runDailyPull", () => {
     expect(summary.customers.error).toBe("boom");
     expect(summary.orders.fetched).toBe(2);
     expect(summary.products.fetched).toBe(2);
+  });
+
+  it("runs customer catch-up after orders pull completes (Phase 25-enrich-2)", async () => {
+    const catchupSpy = vi.fn(async () => ({
+      orphansFound: 5,
+      fetched: 5,
+      upserted: 5,
+      errors: [],
+      startedAt: new Date(),
+      finishedAt: new Date(),
+    }));
+    const { deps } = makeDeps({
+      runCustomerCatchup: catchupSpy,
+      customerCatchupMaxPerRun: 50,
+    });
+    const summary = await runDailyPull("daily_pull_03am_et", deps);
+    expect(catchupSpy).toHaveBeenCalledOnce();
+    expect(catchupSpy).toHaveBeenCalledWith(
+      "daily_pull_03am_et",
+      expect.objectContaining({ maxPerRun: 50 }),
+    );
+    expect(summary.customerCatchup).toEqual(
+      expect.objectContaining({ orphansFound: 5, upserted: 5 }),
+    );
+  });
+
+  it("catch-up failure does not break the rest of the pull summary", async () => {
+    const { deps } = makeDeps({
+      runCustomerCatchup: vi.fn(async () => {
+        throw new Error("catchup blew up");
+      }),
+    });
+    const summary = await runDailyPull("daily_pull_03am_et", deps);
+    expect(summary.orders.fetched).toBe(2);
+    expect(summary.customerCatchup?.errors[0].message).toContain("catchup blew up");
   });
 });

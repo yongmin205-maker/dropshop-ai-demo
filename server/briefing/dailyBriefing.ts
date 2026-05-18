@@ -16,6 +16,7 @@ import {
   loadDailyMetrics as defaultLoadDailyMetrics,
   type DailyMetrics,
 } from "../analytics/dailyMetrics";
+import { fetchNycWeather, type WeatherSummary } from "./weather";
 
 const SOURCE_DEFAULT = "cleancloud" as const;
 const FALLBACK_SUMMARY = "(브리핑 생성 실패 — 잠시 후 다시 시도)";
@@ -28,19 +29,25 @@ export interface RunDailyBriefingArgs {
     source: "cleancloud" | "dropshop_pos";
   }) => Promise<DailyMetrics>;
   invokeLLMFn?: (messages: Message[]) => Promise<InvokeResult>;
+  /** Inject for tests; production uses Open-Meteo via fetchNycWeather. */
+  loadWeather?: (briefingDate: string) => Promise<WeatherSummary | null>;
 }
 
 export interface RunDailyBriefingResult {
   briefingDate: string;
   summaryMarkdown: string;
   metrics: DailyMetrics;
+  weather: WeatherSummary | null;
   llmModel: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
   errorMessage: string | null;
 }
 
-export function buildBriefingPrompt(metrics: DailyMetrics): Message[] {
+export function buildBriefingPrompt(
+  metrics: DailyMetrics,
+  weather: WeatherSummary | null = null,
+): Message[] {
   const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
   const sign = (pct: number) => (pct >= 0 ? `+${pct}` : `${pct}`);
   const fmtHour = (h: number) => {
@@ -107,6 +114,20 @@ export function buildBriefingPrompt(metrics: DailyMetrics): Message[] {
     mixLine,
     peakLine,
     topSpenderLine,
+    metrics.dowVsAvg
+      ? `같은 요일 ${metrics.dowVsAvg.sampleCount}주 평균 대비: 매출 ${
+          metrics.dowVsAvg.revenueDeltaPct === null
+            ? "비교 불가"
+            : `${sign(metrics.dowVsAvg.revenueDeltaPct)}%`
+        } (평균 ${dollars(metrics.dowVsAvg.avgRevenueCents)}), 주문 수 ${
+          metrics.dowVsAvg.orderCountDeltaPct === null
+            ? "비교 불가"
+            : `${sign(metrics.dowVsAvg.orderCountDeltaPct)}%`
+        } (평균 ${metrics.dowVsAvg.avgOrderCount.toFixed(1)}건)`
+      : `같은 요일 평균 대비: 비교 불가 (과거 같은 요일 데이터 없음)`,
+    weather
+      ? `날씨: ${weather.description} (최고 ${weather.tempMaxC.toFixed(1)}°C / 최저 ${weather.tempMinC.toFixed(1)}°C, 강수 ${weather.precipMm.toFixed(1)}mm)`
+      : `날씨: 데이터 없음`,
   ].join("\n");
 
   return [
@@ -120,7 +141,9 @@ export function buildBriefingPrompt(metrics: DailyMetrics): Message[] {
         "- 5~8문장 (또는 짧은 단락 2~3개). 헤드라인 한 문장으로 시작.",
         "- 친근한 존댓말, 마크다운 사용 가능 (굵은 글씨, 표 1개까지).",
         "- 다음 순서를 권장: 헤드라인 → 매출/주문/손님 구성 → 서비스 믹스·피크 시간 → 단골/신규 인사이트 → 운영 제안.",
-        "- '특이한 점'이 보이면 1~2개 짚어주세요. 예: 평소보다 큰 주문, 특정 카테고리 비중 급변, 피크 시간 이동, 단골 0명.",
+        "- '특이한 점'이 보이면 1~2개 짚어주세요. 예: 평소보다 큰 주문, 특정 카테고리 비중 급변, 피크 시간 이동, 단골 0명, 같은 요일 평균 대비 ±20% 이상 매출 변동.",
+        "- 날씨가 데이터에 있다면 매출/주문 패턴과 연결되는 부분이 있을 때만 언급하세요 (예: 비/눈으로 손님 줄었을 가능성, 더운 날 워시앤폴드 증가). 단순한 날씨 보고는 금지.",
+        "- 같은 요일 평균 대비 매출/주문 변동이 ±20%를 넘으면 반드시 한 줄로 언급하세요.",
         "- 단골(재방문) 고객은 '단골' 또는 '재방문 고객'으로 부르고, 신규 고객은 '첫 방문 손님'으로 부르세요.",
         "- 데이터에 없는 사실은 절대 추측하지 마세요. 비교 불가 항목은 그렇다고 적으세요.",
         "- 끝에 한 줄로 오늘 실행 가능한 운영 제안 1개.",
@@ -155,7 +178,13 @@ export async function runDailyBriefing(
   const loadMetrics = args.loadMetrics ?? defaultLoadDailyMetrics;
   const invokeLLMFn = args.invokeLLMFn ?? ((m: Message[]) => invokeLLM({ messages: m }));
 
-  const metrics = await loadMetrics({ briefingDate: args.briefingDate, source });
+  const loadWeather =
+    args.loadWeather ?? ((d: string) => fetchNycWeather({ briefingDate: d }));
+
+  const [metrics, weather] = await Promise.all([
+    loadMetrics({ briefingDate: args.briefingDate, source }),
+    loadWeather(args.briefingDate).catch(() => null),
+  ]);
 
   let summaryMarkdown = FALLBACK_SUMMARY;
   let llmModel: string | null = null;
@@ -164,7 +193,7 @@ export async function runDailyBriefing(
   let errorMessage: string | null = null;
 
   try {
-    const messages = buildBriefingPrompt(metrics);
+    const messages = buildBriefingPrompt(metrics, weather);
     const result = await invokeLLMFn(messages);
     const text = extractTextContent(result);
     if (text.length > 0) summaryMarkdown = text;
@@ -210,6 +239,7 @@ export async function runDailyBriefing(
     briefingDate: metrics.briefingDate,
     summaryMarkdown,
     metrics,
+    weather,
     llmModel,
     promptTokens,
     completionTokens,

@@ -220,3 +220,74 @@ describe("computeDailyMetrics", () => {
     expect(m.periodEndMs).toBe(PERIOD_END);
   });
 });
+
+
+describe("computeDailyMetrics — dowVsAvg", () => {
+  it("returns null when no dowSamples passed", () => {
+    const m = computeDailyMetrics("2026-05-15", PERIOD_START, PERIOD_END, {
+      orders: [order({ id: 1, finalTotalCents: 5000 })],
+      knownCustomerExternalIds: new Set(),
+    });
+    expect(m.dowVsAvg).toBeNull();
+  });
+
+  it("computes positive delta vs DOW baseline", () => {
+    // Today: $100 over 5 orders. Baseline 4 same-DOW samples avg $50/2.5 → today is +100% rev, +100% orders.
+    const m = computeDailyMetrics("2026-05-15", PERIOD_START, PERIOD_END, {
+      orders: [
+        order({ id: 1, finalTotalCents: 2000 }),
+        order({ id: 2, finalTotalCents: 2000 }),
+        order({ id: 3, finalTotalCents: 2000 }),
+        order({ id: 4, finalTotalCents: 2000 }),
+        order({ id: 5, finalTotalCents: 2000 }),
+      ],
+      knownCustomerExternalIds: new Set(),
+      dowSamples: [
+        { revenueCents: 5000, orderCount: 3 },
+        { revenueCents: 5000, orderCount: 2 },
+        { revenueCents: 5000, orderCount: 3 },
+        { revenueCents: 5000, orderCount: 2 },
+      ],
+    });
+    expect(m.dowVsAvg).not.toBeNull();
+    expect(m.dowVsAvg!.sampleCount).toBe(4);
+    expect(m.dowVsAvg!.avgRevenueCents).toBe(5000);
+    expect(m.dowVsAvg!.avgOrderCount).toBe(2.5);
+    expect(m.dowVsAvg!.revenueDeltaPct).toBe(100);
+    expect(m.dowVsAvg!.orderCountDeltaPct).toBe(100);
+  });
+
+  it("computes negative delta vs DOW baseline", () => {
+    const m = computeDailyMetrics("2026-05-15", PERIOD_START, PERIOD_END, {
+      orders: [order({ id: 1, finalTotalCents: 1000 })],
+      knownCustomerExternalIds: new Set(),
+      dowSamples: [
+        { revenueCents: 4000, orderCount: 4 },
+        { revenueCents: 4000, orderCount: 4 },
+      ],
+    });
+    expect(m.dowVsAvg!.avgRevenueCents).toBe(4000);
+    expect(m.dowVsAvg!.revenueDeltaPct).toBe(-75);
+    expect(m.dowVsAvg!.orderCountDeltaPct).toBe(-75);
+  });
+
+  it("delta pct is null when baseline avg is 0", () => {
+    const m = computeDailyMetrics("2026-05-15", PERIOD_START, PERIOD_END, {
+      orders: [order({ id: 1, finalTotalCents: 1000 })],
+      knownCustomerExternalIds: new Set(),
+      dowSamples: [{ revenueCents: 0, orderCount: 0 }],
+    });
+    expect(m.dowVsAvg!.avgRevenueCents).toBe(0);
+    expect(m.dowVsAvg!.revenueDeltaPct).toBeNull();
+    expect(m.dowVsAvg!.orderCountDeltaPct).toBeNull();
+  });
+
+  it("empty dowSamples array → still null (no baseline)", () => {
+    const m = computeDailyMetrics("2026-05-15", PERIOD_START, PERIOD_END, {
+      orders: [order({ id: 1, finalTotalCents: 1000 })],
+      knownCustomerExternalIds: new Set(),
+      dowSamples: [],
+    });
+    expect(m.dowVsAvg).toBeNull();
+  });
+});

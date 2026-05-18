@@ -624,18 +624,18 @@ SUPERSEDED — Claude Code took on Phase 25c instead; Phase 25b was rebuilt dire
 User direction (2026-05-17): "눌렀어. backfill 하고, 지금 AI summary 이거 작동 돼? 다 해. 클로드 코드 시킬 todo 만들어줘"
 
 - [x] 25v-1 · Production health probe — confirm `/api/scheduled/cleancloud-daily-pull` and `/api/scheduled/daily-briefing` return 200/401/405 (not 404) on dropshopai-vx45nyzf.manus.space
-- [ ] 25v-2 · Trigger backfill 12 months — either (a) sandbox hits production scheduled handler, or (b) instruct user to click `posMirror.runBackfill({monthsBack: 12})` in admin UI
-- [ ] 25v-3 · After backfill rows land in `posOrders` / `posCustomers` / `posPayments`, trigger `briefing.generateNow` and inspect Korean LLM output
+- [x] 25v-2 · Trigger backfill 12 months — either (a) sandbox hits production scheduled handler, or (b) instruct user to click `posMirror.runBackfill({monthsBack: 12})` in admin UI (DONE: sandbox script `scripts/run-backfill-12m.mjs` succeeded after adapter fix; 668 customers / 23,257 orders / 17,251 payments / 95 products written to TiDB)
+- [x] 25v-3 · After backfill rows land in `posOrders` / `posCustomers` / `posPayments`, trigger `briefing.generateNow` and inspect Korean LLM output (DONE: 5/16 regen via `scripts/regen-briefing.mjs`; Gemini 2.5-flash produced rich Korean summary)
 - [x] 25v-4 · Author `docs/mainstreet-ai/claude_code_prompts/phase25d_admin_mirror_dashboard.md` — self-contained prompt
-- [ ] 25v-5 · Checkpoint + push + report status to user
+- [x] 25v-5 · Checkpoint + push + report status to user (DONE: a378185a)
 
 ## Phase 25-verify (review pass via Claude Code)
 
 - [x] Run `phase25v_backfill_review_and_fix.md` against backfill.ts (3 sub-agents + lead pass)
 - [x] Apply blocker/should-fix findings on branch `phase/25v-backfill-review-fix` (NOT pushed — Manus will checkpoint)
 - [x] Wrote `docs/mainstreet-ai/reviews/phase25v_backfill_review.md` with verbatim sub-agent outputs
-- [ ] Re-run 12-month backfill in production, verify row counts > 0 across all three endpoints
-- [ ] Trigger Daily Briefing manual regen, verify real LLM Korean summary appears
+- [x] Re-run 12-month backfill in production, verify row counts > 0 across all three endpoints (DONE via sandbox script directly to TiDB)
+- [x] Trigger Daily Briefing manual regen, verify real LLM Korean summary appears
 
 ## Phase 25-verify (review pass) — applied / deferred
 
@@ -689,14 +689,14 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [x] DB final: 668 customers / 23,257 orders / 17,251 payments / 95 products (dedup via `(source, externalId)` unique index — expected).
 - [x] Manually regenerated 5/16 daily briefing → real metrics ($1,690.71 revenue, 59 orders, 34 unique customers) → LLM (gemini-2.5-flash) returned Korean summary with day-over-day deltas + actionable suggestion.
 - [ ] User: republish so production cron picks up the adapter fix.
-- [ ] Follow-up: dailyMetrics says "all 34 customers are new" even after 12-month backfill — investigate `newCustomerCount` logic (likely uses `posCustomers.firstOrderAt` which we never populated during backfill).
+- [x] Follow-up: dailyMetrics says "all 34 customers are new" — FIXED in 25-enrich-1 by switching from `posCustomers.createdAt` to first-order placedAt aggregation. 5/16 now correctly shows 2 신규 / 32 단골.
 - [ ] Follow-up: 95 product rows all flagged as "changes" on first import — first-load noise, suppress in PriceDriftDigest until first stable day.
 
 
 ## Phase 25-enrich (Daily Briefing 강화 + Owner Assistant fix) — 2026-05-18
 
 ### Owner Assistant bug
-- [ ] Diagnose `compareTimeWindows` zod failure: planner produced `{}` args. Reconcile tool JSON-Schema description with zod input schema; add explicit example windows in tool description; add planner default windows for "지난 달 vs 이번 달" intent.
+- [x] Diagnose `compareTimeWindows` zod failure: FIXED in 25-enrich-1. All 12 ToolDefinitions now ship `argsExample`; `toolCatalogueForPrompt` injects them; planner prompt forbids empty args.
 - [ ] Vitest contract: planner output for "지난 달 대비 이번 달 매출" must include `windowA`, `windowB`, valid `metric`.
 
 ### Customer characteristics
@@ -706,20 +706,33 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [ ] Adjust `pullOrders` daily flow to incrementally update these rollups.
 
 ### Daily metrics enrichment
-- [ ] `returningCustomerCount` = unique `customerExternalId` whose `firstOrderAt < periodStartMs`.
-- [ ] `serviceMix`: parse `posOrderItems` (or order.products[]) → group by normalized category (Shirts / Wash & Fold / Dry Clean / Alterations / Other), output {category, orderCount, revenueCents}.
-- [ ] `hourlyDistribution`: 24-bucket array of order count by NYC hour.
+- [x] `returningCustomerCount` = unique `customerExternalId` whose `firstOrderAt < periodStartMs`.
+- [x] `serviceMix`: parse `posOrderItems` → group by normalized category (Shirts / Wash & Fold / Dry Clean / Alterations / Other / Pants / Bedding), output {category, quantity, revenueCents}.
+- [x] `hourlyDistribution`: 24-bucket array of order count by NYC hour, plus `peakHour`.
 - [ ] `dayOfWeekVsAvg`: revenue & order count vs same-DOW 4-week trailing average (% delta).
-- [ ] `topReturningCustomers`: top 3 spenders that day with their `lifetimeOrders` and `lifetimeRevenueCents`.
+- [x] `topSpenderProfiles`: top 3 spenders that day with `lifetimeOrderCount`, `lifetimeRevenueCents`, `firstOrderAt`, `lastOrderAt`, `isReturning` flag.
 
 ### Weather hook
 - [ ] Open-Meteo NYC daily fetch (40.7128, -74.0060) for `briefingDate` (no API key needed). Persist `weatherSummary: { tempHighC, tempLowC, precipMm, conditionCode }` on briefing row.
 - [ ] Cache: don't re-fetch if already saved.
 
 ### LLM prompt rewrite
-- [ ] `buildBriefingPrompt` injects all new fields; system prompt asks LLM to (1) call out anomalies vs DOW avg, (2) call out service mix shifts, (3) reference weather only if it correlates with an unusual pattern, (4) keep returning-customer language ("단골 N명") distinct from new.
+- [x] `buildBriefingPrompt` rewritten to inject serviceMix top-3, peakHour, topSpenderProfiles with 단골/신규 tags, and an explicit anomaly callout requirement. (Weather + DOW-avg deferred to next round.)
 
 ### Validation
-- [ ] tsc clean, full vitest green.
-- [ ] Regen 5/16 briefing from sandbox; manually inspect that output references service mix + DOW comparison + weather context.
+- [x] tsc clean, full vitest green (526 passed / 9 skipped, 0 failing).
+- [x] Regen 5/16 briefing from sandbox: output references service mix (셔츠 70점, 워시앤폴드 41점, 기타 39점), peak hour (오전 10시 11건), 단골 고객 평생 통계 (196번 77건/$5,486), and explicit anomaly callout. (DOW comparison + weather still TODO.)
 - [ ] Republish; user verifies in production UI.
+
+
+## Phase 25-enrich-2 (전부다 해)
+
+- [x] Planner: empty-args repair retry + zod validation + 9 contract tests
+- [x] dailyMetrics: dowVsAvg (4-week same-DOW baseline) + 5 tests
+- [x] Weather: Open-Meteo NYC daily archive + 8 tests
+- [x] Briefing prompt: weather correlation rule + ±20% DOW alert rule
+- [ ] "이름 미상" 원인 조사 + fix (sync 이름 추출 + UI fallback)
+- [ ] 월요일 주간 브리핑 (지난주 7일 rollup 섹션)
+- [ ] Customer rollup permanent columns + backfill + daily increment
+- [ ] 5/16 briefing 재생성 (새 fields 반영)
+- [ ] Full test suite + tsc + checkpoint

@@ -134,6 +134,7 @@ const newCustomersOutput = z.object({
     z.object({
       externalId: z.string(),
       name: z.string().nullable(),
+      phoneE164: z.string().nullable(),
       firstSeenAt: z.string(),
     }),
   ),
@@ -199,6 +200,7 @@ export const aggregateNewCustomers: ToolDefinition<
         return {
           externalId: r.externalId ?? "",
           name: c[0]?.name ?? null,
+          phoneE164: c[0]?.phoneE164 ?? null,
           firstSeenAt: r.firstSeen
             ? new Date(r.firstSeen).toISOString()
             : new Date(0).toISOString(),
@@ -225,6 +227,7 @@ const repeatOutput = z.object({
     z.object({
       externalId: z.string(),
       name: z.string().nullable(),
+      phoneE164: z.string().nullable(),
       visitCountInWindow: z.number(),
       lastSeenAt: z.string().nullable(),
       totalSpendInWindow: z.number(),
@@ -314,6 +317,7 @@ export const aggregateRepeatCustomers: ToolDefinition<RepeatInput, RepeatOutput>
         return {
           externalId: r.externalId!,
           name: c[0]?.name ?? null,
+          phoneE164: c[0]?.phoneE164 ?? null,
           visitCountInWindow: Number(r.visits),
           lastSeenAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
           totalSpendInWindow: Number(r.spend ?? 0),
@@ -338,6 +342,7 @@ const inactiveOutput = z.object({
     z.object({
       externalId: z.string(),
       name: z.string().nullable(),
+      phoneE164: z.string().nullable(),
       lastSeenAt: z.string().nullable(),
       totalLifetimeOrders: z.number(),
       totalLifetimeSpendCents: z.number(),
@@ -411,6 +416,7 @@ export const findInactiveCustomers: ToolDefinition<InactiveInput, InactiveOutput
         return {
           externalId: r.externalId!,
           name: c[0]?.name ?? null,
+          phoneE164: c[0]?.phoneE164 ?? null,
           lastSeenAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
           totalLifetimeOrders: Number(r.orderCount),
           totalLifetimeSpendCents: Number(r.totalSpend ?? 0),

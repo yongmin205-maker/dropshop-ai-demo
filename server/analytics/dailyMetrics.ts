@@ -53,6 +53,11 @@ export interface DailyMetricsInput {
       lastOrderAt: string | null;
     }
   >;
+  /** Same-day-of-week trailing baseline. The loader passes in the
+   *  last N (default 4) occurrences of the briefingDate's weekday
+   *  *before* periodStartMs, already aggregated. Empty array ⇒ no
+   *  baseline; dowVsAvg fields become null. */
+  dowSamples?: Array<{ revenueCents: number; orderCount: number }>;
 }
 
 export interface ServiceMixEntry {
@@ -107,6 +112,15 @@ export interface DailyMetrics {
   hourlyDistribution: HourBucket[];
   /** The peak hour (mode of orderCount). Null if zero orders. */
   peakHour: number | null;
+  /** Same-day-of-week trailing baseline (revenue + order count) and
+   *  today's % delta vs that baseline. Null when no samples available. */
+  dowVsAvg: {
+    sampleCount: number;
+    avgRevenueCents: number;
+    avgOrderCount: number;
+    revenueDeltaPct: number | null;
+    orderCountDeltaPct: number | null;
+  } | null;
 }
 
 /**
@@ -218,7 +232,7 @@ export function computeDailyMetrics(
   periodEndMs: number,
   input: DailyMetricsInput,
 ): DailyMetrics {
-  const { orders, prevOrders, knownCustomerExternalIds, customerProfiles } = input;
+  const { orders, prevOrders, knownCustomerExternalIds, customerProfiles, dowSamples } = input;
 
   const orderCount = orders.length;
   const revenueCents = orders.reduce((s, o) => s + (o.finalTotalCents ?? 0), 0);
@@ -341,6 +355,30 @@ export function computeDailyMetrics(
     }
   }
 
+  // Same-DOW trailing baseline.
+  let dowVsAvg: DailyMetrics["dowVsAvg"] = null;
+  if (dowSamples && dowSamples.length > 0) {
+    const totalRevenue = dowSamples.reduce((s, x) => s + x.revenueCents, 0);
+    const totalOrders = dowSamples.reduce((s, x) => s + x.orderCount, 0);
+    const avgRevenueCents = Math.round(totalRevenue / dowSamples.length);
+    const avgOrderCount = totalOrders / dowSamples.length;
+    const revenueDeltaPct =
+      avgRevenueCents > 0
+        ? +(((revenueCents - avgRevenueCents) / avgRevenueCents) * 100).toFixed(1)
+        : null;
+    const orderCountDeltaPct =
+      avgOrderCount > 0
+        ? +(((orderCount - avgOrderCount) / avgOrderCount) * 100).toFixed(1)
+        : null;
+    dowVsAvg = {
+      sampleCount: dowSamples.length,
+      avgRevenueCents,
+      avgOrderCount: +avgOrderCount.toFixed(2),
+      revenueDeltaPct,
+      orderCountDeltaPct,
+    };
+  }
+
   return {
     briefingDate,
     periodStartMs,
@@ -362,6 +400,7 @@ export function computeDailyMetrics(
     serviceMix,
     hourlyDistribution,
     peakHour,
+    dowVsAvg,
   };
 }
 
@@ -493,10 +532,49 @@ export async function loadDailyMetrics(args: {
     ]),
   );
 
+  // Same-DOW trailing baseline: 4 most recent prior occurrences of
+  // the briefingDate's NYC weekday. We compute each window
+  // independently so DST flips don't drag a sample across the
+  // 04:00-rollover line.
+  const DOW_SAMPLES = 4;
+  const dowWindows: Array<{ start: Date; end: Date }> = [];
+  for (let i = 1; i <= DOW_SAMPLES; i += 1) {
+    const sampleDate = new Date(Date.UTC(y, m - 1, d - 7 * i)).toISOString().slice(0, 10);
+    const sampleNext = new Date(Date.UTC(y, m - 1, d - 7 * i + 1)).toISOString().slice(0, 10);
+    dowWindows.push({
+      start: nycDateToBusinessDayStart(sampleDate),
+      end: nycDateToBusinessDayStart(sampleNext),
+    });
+  }
+  const dowSampleQueries = dowWindows.map((w) =>
+    db
+      .select({
+        finalTotalCents: posOrders.finalTotalCents,
+      })
+      .from(posOrders)
+      .where(
+        and(
+          eq(posOrders.source, args.source),
+          gte(posOrders.placedAt, w.start),
+          lt(posOrders.placedAt, w.end),
+        ),
+      ),
+  );
+  const dowResults = await Promise.all(dowSampleQueries);
+  const dowSamples = dowResults
+    .map((rows) => ({
+      revenueCents: rows.reduce((s, r) => s + (r.finalTotalCents ?? 0), 0),
+      orderCount: rows.length,
+    }))
+    // Drop empty days from the baseline so a one-off closure (snow,
+    // holiday) doesn't pull the average to zero.
+    .filter((x) => x.orderCount > 0);
+
   return computeDailyMetrics(args.briefingDate, start.getTime(), end.getTime(), {
     orders,
     prevOrders,
     knownCustomerExternalIds,
     customerProfiles,
+    dowSamples,
   });
 }

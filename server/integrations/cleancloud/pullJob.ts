@@ -47,6 +47,7 @@ import {
   upsertPayments,
   upsertProducts,
 } from "./db";
+import { runCustomerCatchup, type CustomerCatchupSummary } from "./customerCatchup";
 import type { PosSyncTrigger } from "../../../drizzle/schema";
 
 /** Self-healing overlap window — see file header. */
@@ -66,6 +67,10 @@ export type PullJobSummary = {
     changesDetected: number;
     error: string | null;
   };
+  /** Phase 25-enrich-2: backfill orphan customers (referenced by orders but
+   *  missing from posCustomers because CleanCloud's date-windowed customer
+   *  pull never returned them). Null when the catch-up is disabled. */
+  customerCatchup: CustomerCatchupSummary | null;
   startedAt: Date;
   finishedAt: Date;
 };
@@ -86,6 +91,12 @@ export type PullJobDeps = {
   diffProducts?: typeof diffProductsAndRecordChanges;
   startSyncLog?: typeof startSyncLog;
   finishSyncLog?: typeof finishSyncLog;
+  /** Phase 25-enrich-2: orphan-customer catch-up. Pass `null` to disable
+   *  for tests; defaults to the real implementation in customerCatchup.ts. */
+  runCustomerCatchup?: typeof runCustomerCatchup | null;
+  /** Cap the catch-up per daily run so it stays inside the 180s request
+   *  budget (each lookup is ~0.4s sequential, 4-wide concurrent). */
+  customerCatchupMaxPerRun?: number;
   now?: () => Date;
 };
 
@@ -113,6 +124,7 @@ export async function runDailyPull(
     customers: { fetched: 0, upserted: 0, error: null },
     orders: { fetched: 0, upserted: 0, paymentsUpserted: 0, error: null },
     products: { fetched: 0, upserted: 0, changesDetected: 0, error: null },
+    customerCatchup: null,
     startedAt,
     finishedAt: startedAt,
   };
@@ -224,6 +236,40 @@ export async function runDailyPull(
     } catch (err) {
       summary.products.error = errorMessage(err);
       await _finishSyncLog(logId, { error: summary.products.error });
+    }
+  }
+
+  /* ----- 4. customer catch-up (orphan IDs from posOrders) ---------- *
+   * After orders are upserted we know exactly which customerExternalId's
+   * exist in this account. CleanCloud's getCustomer dateRange mode only
+   * returns customers *updated* in the window, so loyal regulars whose
+   * profile hasn't been edited recently are silently missing from the
+   * mirror. We resolve them by single-ID lookup so findInactiveCustomers
+   * etc. can join on real names. Disabled when deps.runCustomerCatchup is
+   * explicitly null (tests). */
+  const _runCatchup =
+    deps.runCustomerCatchup === undefined ? runCustomerCatchup : deps.runCustomerCatchup;
+  if (_runCatchup) {
+    try {
+      summary.customerCatchup = await _runCatchup(trigger, {
+        maxPerRun: deps.customerCatchupMaxPerRun ?? 100,
+        getCustomer: deps.getCustomer,
+        upsertCustomers: deps.upsertCustomers,
+        startSyncLog: deps.startSyncLog,
+        finishSyncLog: deps.finishSyncLog,
+        now: deps.now,
+      });
+    } catch (err) {
+      // Catch-up failures are non-fatal; the daily pull still succeeded.
+      const msg = errorMessage(err);
+      summary.customerCatchup = {
+        orphansFound: 0,
+        fetched: 0,
+        upserted: 0,
+        errors: [{ customerExternalId: "*", message: msg }],
+        startedAt,
+        finishedAt: (deps.now ?? (() => new Date()))(),
+      };
     }
   }
 
