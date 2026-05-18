@@ -97,7 +97,18 @@ export function buildBriefingPrompt(
       : "피크 시간: 주문 없음";
 
   // Top spenders enriched with lifetime context the LLM can use to
-  // call out 단골 vs 신규.
+  // call out 단골 vs 신규. We resolve a human-friendly display name
+  // here so the LLM never has to fall back to externalId — names come
+  // from posCustomers.name (trimmed), then a masked phone tail, then a
+  // generic "단골 손님"/"첫 방문 손님" placeholder.
+  const displayNameOf = (p: DailyMetrics["topSpenderProfiles"][number]) => {
+    if (p.name && p.name.trim().length > 0) return p.name.trim();
+    if (p.phoneE164) {
+      const tail = p.phoneE164.replace(/[^0-9]/g, "").slice(-4);
+      if (tail.length === 4) return `손님 (…${tail})`;
+    }
+    return p.isReturning ? "단골 손님" : "첫 방문 손님";
+  };
   const topSpenderLine =
     metrics.topSpenderProfiles.length > 0
       ? `상위 고객:\n${metrics.topSpenderProfiles
@@ -105,7 +116,7 @@ export function buildBriefingPrompt(
             const tag = p.isReturning
               ? `단골 (전체 ${p.lifetimeOrderCount}건/${dollars(p.lifetimeRevenueCents)})`
               : "신규";
-            return `  - ${p.externalId.slice(0, 8)}: 어제 ${dollars(p.revenueCents)}/${p.orderCount}건 · ${tag}`;
+            return `  - ${displayNameOf(p)}: 어제 ${dollars(p.revenueCents)}/${p.orderCount}건 · ${tag}`;
           })
           .join("\n")}`
       : "상위 고객: 데이터 없음";
@@ -187,6 +198,7 @@ export function buildBriefingPrompt(
         "- 날씨가 데이터에 있다면 매출/주문 패턴과 연결되는 부분이 있을 때만 언급하세요 (예: 비/눈으로 손님 줄었을 가능성, 더운 날 워시앤폴드 증가). 단순한 날씨 보고는 금지.",
         "- 같은 요일 평균 대비 매출/주문 변동이 ±20%를 넘으면 반드시 한 줄로 언급하세요.",
         "- 단골(재방문) 고객은 '단골' 또는 '재방문 고객'으로 부르고, 신규 고객은 '첫 방문 손님'으로 부르세요.",
+        "- 손님을 호칭할 때는 데이터에 주어진 이름을 그대로 쓰세요 (예: 'Daniela Sassoun님', '손님 (…7672)'). 절대 외부 ID나 숫자(예: '196번님', '#196')로 부르지 마세요. 이름이 비어 있으면 '단골 손님' / '첫 방문 손님' 같은 일반 호칭을 쓰세요.",
         "- 데이터에 없는 사실은 절대 추측하지 마세요. 비교 불가 항목은 그렇다고 적으세요.",
         "- 끝에 한 줄로 오늘 실행 가능한 운영 제안 1개." + weeklyRule,
       ].join("\n"),

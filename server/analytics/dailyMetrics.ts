@@ -23,9 +23,9 @@
  *   date — handles DST flips correctly without a tz library.
  */
 
-import { and, eq, gte, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { getDb } from "../db";
-import { posOrders, type PosOrder } from "../../drizzle/schema";
+import { posCustomers, posOrders, type PosOrder } from "../../drizzle/schema";
 
 const NYC_BUSINESS_DAY_ROLL_HOUR = 4;
 const NYC_TZ = "America/New_York";
@@ -51,6 +51,13 @@ export interface DailyMetricsInput {
       lifetimeRevenueCents: number;
       firstOrderAt: string | null;
       lastOrderAt: string | null;
+      /** Display name from posCustomers mirror. Null when the customer
+       *  has no name on record — caller should fall back to phone or a
+       *  generic placeholder, NEVER to externalId. */
+      name: string | null;
+      /** E.164 phone for masked fallback (e.g. "…·7672"). Null when
+       *  not collected. */
+      phoneE164: string | null;
     }
   >;
   /** Same-day-of-week trailing baseline. The loader passes in the
@@ -107,6 +114,12 @@ export interface DailyMetrics {
     firstOrderAt: string | null;
     lastOrderAt: string | null;
     isReturning: boolean;
+    /** Mirror display name. Null when missing — prompt builder must
+     *  fall back to phoneE164 (masked) or a generic placeholder, NEVER
+     *  to externalId. */
+    name: string | null;
+    /** E.164 phone for masked fallback. Null when missing. */
+    phoneE164: string | null;
   }>;
   serviceMix: ServiceMixEntry[];
   hourlyDistribution: HourBucket[];
@@ -311,6 +324,8 @@ export function computeDailyMetrics(
       firstOrderAt: p?.firstOrderAt ?? null,
       lastOrderAt: p?.lastOrderAt ?? null,
       isReturning: knownCustomerExternalIds.has(s.externalId),
+      name: p?.name ?? null,
+      phoneE164: p?.phoneE164 ?? null,
     };
   });
 
@@ -520,16 +535,56 @@ export async function loadDailyMetrics(args: {
     }
     profileAccumulator.set(o.customerExternalId, cur);
   }
+  // Look up display name + phone from the posCustomers mirror so
+  // top-spender lines never show "고객 196번". Mirror is small (≤1475
+  // rows for cleancloud) and we only need today's customer ids.
+  const todaysCustomerIdList = Array.from(todaysCustomerIds);
+  const mirrorRows =
+    todaysCustomerIdList.length > 0
+      ? await db
+          .select({
+            externalId: posCustomers.externalId,
+            name: posCustomers.name,
+            phoneE164: posCustomers.phoneE164,
+          })
+          .from(posCustomers)
+          .where(
+            and(
+              eq(posCustomers.source, args.source),
+              inArray(posCustomers.externalId, todaysCustomerIdList),
+            ),
+          )
+      : [];
+  const mirrorByExternalId = new Map<
+    string,
+    { name: string | null; phoneE164: string | null }
+  >();
+  for (const r of mirrorRows) {
+    mirrorByExternalId.set(r.externalId, {
+      name: r.name?.trim() ? r.name.trim() : null,
+      phoneE164: r.phoneE164?.trim() ? r.phoneE164.trim() : null,
+    });
+  }
+
   const customerProfiles = new Map(
-    Array.from(profileAccumulator.entries()).map(([id, p]) => [
-      id,
-      {
-        lifetimeOrderCount: p.lifetimeOrderCount,
-        lifetimeRevenueCents: p.lifetimeRevenueCents,
-        firstOrderAt: p.firstOrderAt ? new Date(p.firstOrderAt).toISOString() : null,
-        lastOrderAt: p.lastOrderAt ? new Date(p.lastOrderAt).toISOString() : null,
-      },
-    ]),
+    Array.from(profileAccumulator.entries()).map(([id, p]) => {
+      const mirror = mirrorByExternalId.get(id);
+      return [
+        id,
+        {
+          lifetimeOrderCount: p.lifetimeOrderCount,
+          lifetimeRevenueCents: p.lifetimeRevenueCents,
+          firstOrderAt: p.firstOrderAt
+            ? new Date(p.firstOrderAt).toISOString()
+            : null,
+          lastOrderAt: p.lastOrderAt
+            ? new Date(p.lastOrderAt).toISOString()
+            : null,
+          name: mirror?.name ?? null,
+          phoneE164: mirror?.phoneE164 ?? null,
+        },
+      ];
+    }),
   );
 
   // Same-DOW trailing baseline: 4 most recent prior occurrences of

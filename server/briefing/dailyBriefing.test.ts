@@ -45,6 +45,8 @@ function metricsFixture(overrides: Partial<DailyMetrics> = {}): DailyMetrics {
         firstOrderAt: "2025-09-01T12:00:00.000Z",
         lastOrderAt: "2026-05-14T18:00:00.000Z",
         isReturning: true,
+        name: "Daniela Sassoun",
+        phoneE164: "+19176897672",
       },
     ],
     serviceMix: [
@@ -119,9 +121,71 @@ describe("buildBriefingPrompt", () => {
     expect(messages[1].content).toContain("비교 불가");
   });
 
-  it("includes top-spender summary line when data present", () => {
+  it("includes top-spender summary line with display name (never externalId)", () => {
     const messages = buildBriefingPrompt(metricsFixture());
-    expect(messages[1].content).toContain("cust-aaa");
+    const userContent = messages[1].content as string;
+    expect(userContent).toContain("Daniela Sassoun");
+    // Should NOT leak the raw externalId into the prompt anymore.
+    expect(userContent).not.toContain("cust-aaa");
+  });
+
+  it("falls back to masked phone tail when name is missing", () => {
+    const userContent = buildBriefingPrompt(
+      metricsFixture({
+        topSpenderProfiles: [
+          {
+            externalId: "cust-no-name",
+            revenueCents: 5000,
+            orderCount: 1,
+            lifetimeOrderCount: 4,
+            lifetimeRevenueCents: 22000,
+            firstOrderAt: "2025-12-01T12:00:00.000Z",
+            lastOrderAt: "2026-05-15T10:00:00.000Z",
+            isReturning: true,
+            name: null,
+            phoneE164: "+19175551234",
+          },
+        ],
+      }),
+    )[1].content as string;
+    expect(userContent).toContain("…·1234".replace("·", "")); // "…1234"
+    expect(userContent).not.toContain("cust-no-name");
+  });
+
+  it("falls back to '단골 손님' / '첫 방문 손님' when both name and phone are missing", () => {
+    const userContent = buildBriefingPrompt(
+      metricsFixture({
+        topSpenderProfiles: [
+          {
+            externalId: "cust-anon-1",
+            revenueCents: 5000,
+            orderCount: 1,
+            lifetimeOrderCount: 7,
+            lifetimeRevenueCents: 30000,
+            firstOrderAt: "2025-09-01T12:00:00.000Z",
+            lastOrderAt: "2026-05-15T10:00:00.000Z",
+            isReturning: true,
+            name: null,
+            phoneE164: null,
+          },
+          {
+            externalId: "cust-anon-2",
+            revenueCents: 4000,
+            orderCount: 1,
+            lifetimeOrderCount: 1,
+            lifetimeRevenueCents: 4000,
+            firstOrderAt: "2026-05-15T10:00:00.000Z",
+            lastOrderAt: "2026-05-15T10:00:00.000Z",
+            isReturning: false,
+            name: null,
+            phoneE164: null,
+          },
+        ],
+      }),
+    )[1].content as string;
+    expect(userContent).toContain("단골 손님");
+    expect(userContent).toContain("첫 방문 손님");
+    expect(userContent).not.toContain("cust-anon");
   });
 
   it("falls back to placeholder when no top spenders", () => {
@@ -163,7 +227,7 @@ describe("buildBriefingPrompt", () => {
     expect(userContent).toContain("단골 (전체 14건/$1200.00)");
   });
 
-  it("tags new customers as 신규 on top spenders", () => {
+  it("tags new customers as 신규 on top spenders (using their name)", () => {
     const userContent = buildBriefingPrompt(
       metricsFixture({
         topSpenderProfiles: [
@@ -176,11 +240,14 @@ describe("buildBriefingPrompt", () => {
             firstOrderAt: "2026-05-15T10:00:00.000Z",
             lastOrderAt: "2026-05-15T10:00:00.000Z",
             isReturning: false,
+            name: "Alice Newcomer",
+            phoneE164: "+15555550100",
           },
         ],
       }),
     )[1].content as string;
-    expect(userContent).toMatch(/cust-new\b.*· 신규/);
+    expect(userContent).toMatch(/Alice Newcomer.*· 신규/);
+    expect(userContent).not.toContain("cust-new");
   });
 });
 
