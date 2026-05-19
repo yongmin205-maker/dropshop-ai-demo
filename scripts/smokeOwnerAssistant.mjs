@@ -46,7 +46,11 @@ for (const { q, cat } of QUESTIONS) {
           console.error(`  ✗ compareTimeWindows missing fields:`, a);
           ok = false;
         } else {
-          console.log(`  ✓ compareTimeWindows windowA=${a.windowA.from}→${a.windowA.to}, windowB=${a.windowB.from}→${a.windowB.to}, metric=${a.metric}`);
+          console.log(`  ✓ compareTimeWindows windowA=${a.windowA.from}→${a.windowA.to}, windowB=${a.windowB.from}→${a.windowB.to}, metric=${a.metric}, mode=${a.mode ?? "(default)"}`);
+          if (q.includes("이번") && a.mode !== "fair-pace") {
+            console.error(`  ✗ question references in-progress period but mode is not fair-pace`);
+            ok = false;
+          }
         }
       } else {
         console.log(`  ✓ ${c.toolName} args ok`);
