@@ -1,14 +1,33 @@
 /**
- * Smoke test: does the live planner produce valid args for the
- * "last month vs this month" question?
+ * Smoke test: does the live planner produce valid args, and does the
+ * Phase 26 critic agree the plan is correct?
  *
- * Calls planTools() with the real Gemini LLM (no mock) and prints the plan.
+ * Calls planTools() with the real Gemini LLM (no mock) and prints the
+ * plan, then runs evaluatePlan() with empty toolResults/toolCalls so
+ * the LLM critic can opine on whether the plan _shape_ is correct
+ * (static S4 — "all tools failed" — is skipped when toolCalls is
+ * empty, so the critic gets to do its semantic job here).
+ *
+ * Per phase26_architecture.md §9.3 commit 7: smoke prints critic
+ * verdict per question. Operator reads this to confirm the new loop
+ * catches the regressions the Phase 26 PM set named:
+ *   - "지난 달 vs 이번 달" → critic ok (fair-pace)
+ *   - "60일 이상 안 온 손님" → critic ok (legitimate 0-row or rows)
+ *   - "최근 2주 단골" → critic ok (14d window)
+ *   - "지난 주 어느 요일" → critic ok (groupBy=dayOfWeek required)
+ *
  * Asserts that:
- *   - at least one tool call is compareTimeWindows
- *   - its args include non-empty windowA, windowB, metric
+ *   - planner produces non-empty plans for all 4 questions
+ *   - compareTimeWindows (when present) has non-empty windowA/B/metric
+ *   - critic does NOT veto on S1-S3 (those are hard plan defects)
+ *
+ * The critic LLM verdict is logged but NOT used as a pass/fail
+ * threshold — Manus uses the smoke output to decide whether the
+ * critic is finding real regressions vs over-triggering.
  */
 import "dotenv/config";
 import { planTools } from "../server/ownerAssistant/planner.ts";
+import { evaluatePlan } from "../server/ownerAssistant/critic.ts";
 
 const QUESTIONS = [
   { q: "지난 달 대비 이번 달 매출 어떨어?", cat: "compare" },
@@ -56,6 +75,41 @@ for (const { q, cat } of QUESTIONS) {
         console.log(`  ✓ ${c.toolName} args ok`);
       }
     }
+
+    // Phase 26 — critic pass on the planner's output. Empty
+    // toolResults/toolCalls so we're asking the critic about the
+    // plan _shape_, not the result data. S4 (all-tools-failed)
+    // skips when toolCalls is empty; S1-S3 should pass on a real
+    // planner-produced plan.
+    let criticVerdict = "?";
+    let criticReason = "";
+    let criticInvariant = "";
+    try {
+      const verdict = await evaluatePlan({
+        question: q,
+        category: cat,
+        plan: plan.steps,
+        toolResults: {},
+        toolCalls: [],
+        now,
+        history: [],
+      });
+      criticVerdict = verdict.verdict;
+      criticReason = verdict.reason;
+      criticInvariant = verdict.failedInvariant ?? "";
+      const usedTag = verdict.usedLlm ? "LLM" : "static";
+      console.log(`  · critic (${usedTag}): ${criticVerdict}${criticInvariant ? ` [${criticInvariant}]` : ""} — ${criticReason}`);
+      if (verdict.replanHint) console.log(`    ↳ replan: ${verdict.replanHint}`);
+      if (verdict.disclaimer) console.log(`    ↳ disclaimer: ${verdict.disclaimer}`);
+      // S1-S3 violations are hard plan defects we want to flag.
+      if (!verdict.usedLlm && /^S[123]$/.test(criticInvariant)) {
+        console.error(`  ✗ critic static-veto on S1-S3 — planner emitted a hard plan defect`);
+        ok = false;
+      }
+    } catch (err) {
+      console.error(`  · critic threw:`, err.message);
+    }
+
     if (ok) {
       console.log(`  ✓ all tool calls have valid args`);
       pass++;
