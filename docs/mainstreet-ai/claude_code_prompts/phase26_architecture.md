@@ -4,6 +4,13 @@
 **Branch:** `phase26/critic-loop` (post-PM commit `57e5e79`).
 **Locked PM decisions:** Q1 hybrid (static = guard rail, LLM = real critic), Q2 plan+results only (no synth), Q3 fresh planner w/ extra system context, Q4 critic-authored disclaimer (≤60 tokens, owner-friendly tone).
 
+## Decisions locked after Architect review (DP1-DP4)
+
+- **DP1 — Static = veto-only, never stamps `ok`.** No `S0` allowlist. The LLM critic is the only path to `verdict: "ok"`. Cost saving applies only when static catches a hard spec violation and short-circuits to `retry` without calling the LLM. Rationale: an `S0` allowlist would become a heuristic accumulator — the exact pattern Phase 26 retires. Cost will be measured in prod for one week; if critic LLM cost exceeds 0.5% of ARPU we revisit with a narrow, data-driven allowlist (NOT a blanket one).
+- **DP2 — 25s hard wall, 22s pre-flight bail before critic-pass-2, per-stage soft budgets, `stageOverrun` flag.** See §2.1 below for the full timing model + constants list.
+- **DP3 — When pass-2 critic returns `retry`, use its `disclaimer` field as the abort disclaimer; fall back to `reason` if empty.** Schema makes `disclaimer` required when `verdict === "retry"` so the fallback rarely fires; it's a safety net, not the primary path.
+- **DP4 — Single chronological `events: TraceEvent[]` array on `AgentTrace`.** UI renders all events sorted by `t`; critic events get a red/green verdict chip for visual distinction. `toolCalls[]` retained for backward compat, derived from `events`. See §3.1 below for the union shape.
+
 ## 1. Module surface (`server/ownerAssistant/critic.ts`)
 
 ```ts
@@ -223,27 +230,104 @@ User's 4 named fixtures → mapped:
 - "args semantically wrong" → cases 4 (groupBy) + 1's regression variant (drop fair-pace and confirm critic catches it).
 - "synth hallucinates" → **NOT covered by this phase** (per Q2 scope). Documented gap below.
 
-## 6. What we are NOT covering (Q2 scope boundary)
+## 6. What we are NOT covering (Q2 scope boundary) — **Phase 27 deferred**
 
-Per Q2: critic evaluates plan + tool results, not synthesizer output. The user's 4th fixture ("synthesizer hallucinates a store name not in data") is therefore **outside Phase 26's safety net**. Mitigation lives in:
-1. The existing synthesizer system prompt's "추측 금지" rule (unchanged).
+Per Q2: Phase 26 critic evaluates plan + tool results, NOT synthesizer output. The user's 4th named fixture ("synthesizer hallucinates a store name not in data") is therefore **outside Phase 26's safety net**. Mitigation today:
+1. The existing synthesizer system prompt's "추측 금지" rule (unchanged in Phase 26).
 2. The synthesizer's `Tool results JSON` user message wrapping — the model only sees what tools returned, so out-of-tool fabrication is already low-probability.
-3. **Phase 27 follow-up**: an answer-grounding critic pass. Out of scope today; tracked as a known gap in `todo.md` after Coder commit.
 
-## 7. Decision points for user
+**Phase 27 — synth-answer critic (explicitly deferred, locked in this doc so future sessions don't relitigate):**
+- (a) **Separate LLM/pass from Phase 26's plan critic.** Reason: current critic reasoning ≤2 sentences over structured plan+results JSON — short and deterministic-ish. Synth-answer validation is a different task (long Korean prose against a numeric ground truth) and deserves its own prompt + model decision.
+- (b) **Trigger condition: answer contains ≥ N numeric tokens** (running threshold; tune in prod from logged answers). Running synth critic on every answer doubles LLM cost; gating on "answer makes numerical claims" catches the hallucination class that matters without burning tokens on greetings/explanations.
+- (c) Coder commit must add a `// TODO(phase27): synth-answer critic` marker at the synth call site so the next session can find the integration point quickly.
+- (d) Phase 26 Coder does NOT implement (a)/(b). Just the TODO marker + a `todo.md` entry under "Phase 27 — synth-answer critic" with these two bullets verbatim.
 
-Two required (brief asks ≥2); two optional.
+## 7. Decision points (resolved)
 
-**DP1. Confirm static pre-check semantics.** My read of your Q1: static can only short-circuit to `retry` on hard spec violations (S1–S4). Static CANNOT stamp `ok` — that's always the LLM critic's job. So the cost-saving from "hybrid" applies only when the plan is schema-broken. Confirm this is what you meant; if you instead want static to be able to stamp `ok` on an allowlist of trivially-good plans (e.g. `findInactiveCustomers` with default args + non-zero rows), say so and I'll add an `S0` allowlist rule before the LLM critic.
-
-**DP2. Wall-clock budget.** I'm proposing 25s for the whole agent loop (router + plan + critic + replan + critic2 + synth). Beyond that, abort with a synthetic disclaimer "분석 시간이 초과되어 부분 결과만 보여드려요". This leaves headroom inside Cloud Run's 30s tRPC mutation timeout. OK, or a different number?
-
-**DP3 (optional). Abort disclaimer source.** When pass 2's critic returns `retry` and we run out of budget, we use that critic call's own `disclaimer` field (which it always populates, per the prompt). Sub-question: if the 2nd-pass critic's disclaimer is empty (model didn't fill it), fall back to its `reason` string? My lean: yes, fall back to reason; otherwise we'd need a 3rd critic call just to author the disclaimer.
-
-**DP4 (optional). Trace UI density.** `criticCalls[]` lands as a separate array next to `toolCalls[]` in `AgentTrace`. The UI panel renders critic passes as their own row block (1-2 rows for the typical happy path, 4 rows for full retry). Confirm OK, or do you want them inline with the tool calls in chronological order?
+DP1–DP4 are locked at the top of this doc ("Decisions locked after Architect review"). This section is kept for diff history.
 
 ## 8. Files Architect commits in this turn
 
-Just `docs/mainstreet-ai/claude_code_prompts/phase26_architecture.md`. No code yet. Coder role starts after your DP1/DP2 answers + any objections to invariants / prompt draft / test matrix.
+`docs/mainstreet-ai/claude_code_prompts/phase26_architecture.md` only. No code yet. Coder role starts on the next message.
 
-Waiting on DP1, DP2 (DP3/DP4 if you have a view).
+## 9. Coder hand-off contracts (constants + types Coder must wire verbatim)
+
+The Coder writes these in code; this section pins the names + values so the test fixtures and the architecture stay in sync. **DP2 per-stage budgets live at the top of `critic.ts` as exported `const`s** (user direction — easy retroactive tuning from prod data).
+
+### 9.1 Timing constants (`server/ownerAssistant/critic.ts` top of file)
+
+```ts
+/** Phase 26 timing budgets — measured retroactively in prod; tune here. */
+export const PHASE26_BUDGETS = {
+  /** Hard ceiling on the whole agent loop (router + plan + critic + replan
+   *  + critic2 + synth). Beyond this we abort with a synthetic disclaimer.
+   *  Inside Cloud Run's 30s tRPC mutation timeout. */
+  WALL_MS: 25_000,
+  /** Per-stage soft budgets — overruns set a `stageOverrun` event in the
+   *  trace but do NOT block. Sum = 22s, matches PREFLIGHT_BAIL_MS. */
+  PLANNER_MS: 4_000,
+  EXECUTOR_MS: 8_000,
+  CRITIC_MS: 3_000,
+  REPLAN_MS: 4_000,
+  /** If `Date.now() - loopStartedAt > this` when about to start critic-pass-2,
+   *  skip critic2 and synth with the "critic 2회차를 실행하지 못했습니다."
+   *  disclaimer. Prevents the p99 tail from crossing the 25s wall. */
+  PREFLIGHT_BAIL_MS: 22_000,
+} as const;
+
+/** Disclaimer copy when PREFLIGHT_BAIL fires (DP2 wording). */
+export const PREFLIGHT_BAIL_DISCLAIMER =
+  "critic 2회차를 실행하지 못해 첫 plan 결과로 답변합니다. 결과를 한 번 더 확인해 주세요.";
+
+/** Disclaimer copy when the WALL_MS hard ceiling fires (DP2 wording). */
+export const WALL_TIMEOUT_DISCLAIMER =
+  "분석 시간이 초과되어 부분 결과만 보여드려요.";
+```
+
+### 9.2 TraceEvent union (`server/ownerAssistant/types.ts`, additive)
+
+```ts
+/** Phase 26 — chronological log of every step the orchestrator took. UI
+ *  sorts by `t` and renders one row per event. Critic events get a
+ *  red (`verdict === "retry"`) or green (`verdict === "ok"`) chip per DP4. */
+export type TraceEvent =
+  | { kind: "router"; t: number; durationMs: number; category: QuestionCategory; reasoning: string }
+  | { kind: "planner"; t: number; durationMs: number; pass: number; steps: PlanStep[]; llmCalls: number; extraContext?: string }
+  | { kind: "toolCall"; t: number; durationMs: number; pass: number; toolName: ToolName; inputJson: string; outputJson: string; errorMessage: string | null }
+  | { kind: "critic"; t: number; durationMs: number; pass: number; verdict: CriticVerdict; reason: string; replanHint: string | null; disclaimer: string | null; failedInvariant: string | null; usedLlm: boolean }
+  | { kind: "synth"; t: number; durationMs: number; answerLength: number; appliedDisclaimer: string | null }
+  | { kind: "stageOverrun"; t: number; stage: "planner"|"executor"|"critic"|"replan"; softBudgetMs: number; actualMs: number };
+
+/** Phase 26 — added to AgentTrace. `toolCalls[]` retained for backward
+ *  compat — derive from events.filter(e => e.kind === "toolCall"). */
+export type AgentTrace = {
+  // ...existing fields
+  events: TraceEvent[];
+  criticCalls: CriticCall[]; // derived from events for backward compat; same instances
+};
+```
+
+### 9.3 Coder commit sequence (TDD)
+
+Per brief §4 Role 3 + user's "first PR has 7 fixtures + 579 existing + tsc clean bundled":
+
+| # | Commit | State after | Files |
+|---|---|---|---|
+| 1 | `phase26: scaffold critic tests (TDD red)` | tsc clean, vitest red on 7 critic cases | `server/ownerAssistant/critic.test.ts` + stub `server/ownerAssistant/critic.ts` (signatures + `throw new Error("not impl")`) |
+| 2 | `phase26: implement staticPreCheck` | static-only fixtures green (~2 of 7) | `critic.ts` `staticPreCheck` body |
+| 3 | `phase26: implement llmCritic + evaluatePlan` | all critic.test.ts green | `critic.ts` rest |
+| 4 | `phase26: thread critic into agent loop` | agent.test.ts updated, all server tests green | `agent.ts`, `types.ts` events union |
+| 5 | `phase26: retire planner heuristics + add Phase 27 TODO marker` | planner.test.ts unchanged green; net −15-30 lines on basePrompt | `planner.ts` only |
+| 6 | `phase26: AgentTracePanel critic chip` | client tests green | `client/src/components/AgentTracePanel.tsx` (or actual filename) |
+| 7 | `phase26: smokeOwnerAssistant critic trace` | smoke prints critic verdict per question | `scripts/smokeOwnerAssistant.mjs` |
+| Final | (no commit; only push) | full suite green, tsc clean | n/a |
+
+User-imposed acceptance bar before pushing: **fixture 7개 + 기존 579 tests + tsc clean 한 번에 통과**. Push only after that's true on local. Smoke run lives on Manus (Forge key never leaves their sandbox per user direction).
+
+### 9.4 Reviewer guard rails (preview for Reviewer role)
+
+- Critic prompt size ≤ 80 lines (red flag 200 per brief).
+- `planner.basePrompt` net −15 to −30 lines.
+- No new heuristic accumulator anywhere in `critic.ts` (no `if question.includes("…") then …` chains — that's just moving the heuristic from planner to critic).
+- Every `failedInvariant` string emitted at runtime must match an entry in §3's invariant table.
+- TraceEvent ordering invariant: `events[i].t <= events[i+1].t` for all i. Test this.
