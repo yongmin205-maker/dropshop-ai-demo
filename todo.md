@@ -736,3 +736,31 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [~] Customer rollup permanent columns: deferred (YAGNI). Current GROUP-BY queries on 1475 customers are <50ms; lifetime info already surfaced via `topSpenderProfiles`. Revisit when customer count >10k or briefing latency >2s.
 - [x] 5/16 briefing 재생성: gemini-2.5-flash, errorMessage null, llm 1회 호출. 헤드라인에 dowVsAvg +42.2% / -13.7% 둘 다 명시, "주문은 늘었는데 매출은 줄었다 → 건당 그고각" 인사이트, 단골 32/신규 2 정확 찝음, 운영 제안 1개. weeklyRollup null (토요일, 의도대로).
 - [x] Full test suite (569 passed, 9 skipped) + tsc clean + checkpoint 8db1b6b4.
+
+
+## Phase 26 — Claude-as-critic self-correcting loop (휴리스틱 prompt patching 청산)
+
+### 동기
+- 사용자 피드백: planner prompt에 "이런 케이스는 이렇게, 저런 케이스는 저렇게" 룰 누더기로 박는 방식은 새 질문마다 깨짐.
+- "지난 주 어떤 요일" → groupBy=day 잘못 호출, "이번 달 vs 지난 달" → fair-pace 안 박는 케이스가 발생.
+- 정답은 LLM 자체에 self-correction을 시키는 것. Claude를 critic으로.
+
+### 작업
+- [ ] Claude 모델이 `invokeLLM`에서 어떻게 호출되는지 / 별도 anthropic client가 필요한지 확인.
+- [ ] `server/ownerAssistant/critic.ts`: `evaluatePlan({ question, category, steps, results, now })` → `{ verdict: "ok" | "retry", reason, replanHint }`.
+  - 평가 기준: 진행 중 기간에 mode=fair-pace 없나, groupBy가 의도와 맞나, 잘못된 윈도우 해석, 빈 결과 fabrication 등.
+- [ ] `agent.ts` rewire: plan → execute → critic → (verdict=retry면) replan with hint → 다시 execute. 최대 2 critic pass.
+- [ ] critic vitest (mocked Claude): "이번 달 windowB로 plain mode" → verdict=retry + hint.
+- [ ] integration vitest: agent 전체가 self-correct 하는지.
+- [ ] planner.ts basePrompt 휴리스틱 룰 제거. critic이 잡으니 prompt는 짧고 일반적으로.
+- [ ] live smoke: gemini planner + claude critic으로 4개 케이스 모두 정답 도달.
+- [ ] tradeoff 문서: 응답시간 ~5s → ~15s. agent trace UI에 critic 단계 노출.
+- [ ] 전체 test + tsc + checkpoint + 사용자 publish 권유.
+
+
+## Phase 27 — Claude multi-role handoff (Owner Assistant self-correcting loop)
+- [ ] Confirm GitHub repo URL (user-owned, kept in sync via `user_github` remote)
+- [ ] Draft single markdown brief with PM / Architect / Coder / Reviewer prompts and handoff rules
+- [ ] Brief specifies: problem statement, repo URL, key paths, success criteria, output format, max iterations
+- [ ] Brief explicitly instructs Claude not to assume and to ask clarifying questions before coding
+- [ ] Deliver brief as attachment for the user to paste into Claude
