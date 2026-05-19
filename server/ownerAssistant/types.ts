@@ -100,6 +100,92 @@ export type ToolCall = {
   errorMessage: string | null;
 };
 
+/**
+ * Phase 26 — chronological log of every step the orchestrator took.
+ * The UI sorts by `t` and renders one row per event; critic events get
+ * a red/green verdict chip per DP4. `toolCall` and `critic` events
+ * carry `pass` (1-indexed) so the UI can group by replan attempt.
+ *
+ * Forward declaration of `CriticVerdict` here keeps `types.ts` self-
+ * contained — `critic.ts` re-exports the same string union. We avoid
+ * importing from `./critic` to keep types.ts at the bottom of the
+ * dependency graph (router/planner/executor/synthesizer all consume
+ * it).
+ */
+export type CriticVerdictTag = "ok" | "retry";
+
+export type TraceEvent =
+  | {
+      kind: "router";
+      t: number;
+      durationMs: number;
+      category: QuestionCategory;
+      reasoning: string;
+    }
+  | {
+      kind: "planner";
+      t: number;
+      durationMs: number;
+      pass: number;
+      steps: PlanStep[];
+      llmCalls: number;
+      extraContext?: string;
+    }
+  | {
+      kind: "toolCall";
+      t: number;
+      durationMs: number;
+      pass: number;
+      toolName: ToolName;
+      inputJson: string;
+      outputJson: string;
+      errorMessage: string | null;
+    }
+  | {
+      kind: "critic";
+      t: number;
+      durationMs: number;
+      pass: number;
+      verdict: CriticVerdictTag;
+      reason: string;
+      replanHint: string | null;
+      disclaimer: string | null;
+      failedInvariant: string | null;
+      usedLlm: boolean;
+    }
+  | {
+      kind: "synth";
+      t: number;
+      durationMs: number;
+      answerLength: number;
+      appliedDisclaimer: string | null;
+    }
+  | {
+      kind: "stageOverrun";
+      t: number;
+      stage: "planner" | "executor" | "critic" | "replan";
+      softBudgetMs: number;
+      actualMs: number;
+    };
+
+/**
+ * One critic pass — the trace surfaces an array of these per turn.
+ * Type duplicated in `critic.ts` as `CriticCall` (same shape); the
+ * duplication is intentional so `types.ts` stays at the bottom of
+ * the dep graph and `critic.ts` can re-export.
+ */
+export type CriticCallTrace = {
+  pass: number;
+  verdict: CriticVerdictTag;
+  reason: string;
+  replanHint: string | null;
+  disclaimer: string | null;
+  failedInvariant: string | null;
+  startedAt: number;
+  finishedAt: number;
+  usedLlm: boolean;
+};
+
 export type AgentTrace = {
   question: string;
   category: QuestionCategory;
@@ -107,10 +193,27 @@ export type AgentTrace = {
   toolCalls: ToolCall[];
   answerMarkdown: string;
   totalLatencyMs: number;
-  /** Router + Planner + Synthesizer calls; smalltalk path is 2 (Router +
-   *  Synthesizer), happy-path tool turn is 3 (Router + Planner +
-   *  Synthesizer), Planner-retry adds 1. */
+  /**
+   * Router + Planner + Critic passes + Synthesizer calls.
+   *   - smalltalk / oos:              2 (Router + Synth)
+   *   - happy-path tool, 1 critic ok: 4 (Router + Planner + Critic + Synth)
+   *   - replan, 2 critic ok on pass2: 6 (R + P + C1 + P2 + C2 + Synth)
+   *   - Planner over-produce adds 1 to its hop.
+   *   - Static-veto critic does NOT count (no LLM call).
+   */
   llmCallCount: number;
+  /**
+   * Phase 26 — chronological event log. Always non-empty; smalltalk
+   * has just `router` + `synth` events. UI iterates this directly.
+   */
+  events: TraceEvent[];
+  /**
+   * Phase 26 — every critic pass this turn. Derived from
+   * `events.filter(e => e.kind === "critic")` but kept as a top-level
+   * field so callers don't reach into the union. Empty for smalltalk
+   * / oos paths.
+   */
+  criticCalls: CriticCallTrace[];
 };
 
 /* ----- Output of the orchestrator ----- */

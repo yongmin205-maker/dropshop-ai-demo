@@ -90,10 +90,24 @@ ${catalogue}
 `;
 }
 
+/**
+ * Optional planner inputs. Phase 26 adds `extraContext` so the
+ * orchestrator can thread a critic's `replanHint` into the planner's
+ * 2nd pass — see arch §2 (Q3 = option (a), fresh planner with extra
+ * system context). The hint becomes an additional system message,
+ * NOT a step-targeted diff; the planner stays authoritative on plan
+ * shape.
+ */
+export type PlanOptions = {
+  /** KR, 1-2 sentences. Appended to the system prompt. */
+  extraContext?: string;
+};
+
 export type PlanFn = (
   question: string,
   category: QuestionCategory,
   now: Date,
+  options?: PlanOptions,
 ) => Promise<PlanResult>;
 
 type RawPlanStep = { toolName: string; args: unknown; reason?: string };
@@ -202,8 +216,11 @@ function buildRepairPrompt(
 ${lines.join("\n")}`;
 }
 
-export const planTools: PlanFn = async (question, category, now) => {
-  const prompt1 = basePrompt(now);
+export const planTools: PlanFn = async (question, category, now, options) => {
+  const extra = options?.extraContext?.trim();
+  const prompt1 = extra
+    ? `${basePrompt(now)}\n\n**Critic 피드백 (직전 시도에서 이렇게 바꾸라고 했습니다):** ${extra}`
+    : basePrompt(now);
   let raw = await callPlanner(prompt1, question, category);
   let llmCalls = 1;
 

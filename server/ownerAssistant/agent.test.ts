@@ -3,20 +3,23 @@
 /**
  * Orchestrator tests for `ask()` in agent.ts.
  *
- * Every LLM hook (router, planner, synthesizer) is dependency-injected.
- * The Executor itself runs against the real TOOL_REGISTRY but the DB
- * mock returns null from `getDb()`, so every mirror-backed tool
- * short-circuits to its safe-empty shape — fast and deterministic.
+ * Every LLM hook (router, planner, critic, synthesizer) is
+ * dependency-injected. The Executor itself runs against the real
+ * TOOL_REGISTRY but the DB mock returns null from `getDb()`, so every
+ * mirror-backed tool short-circuits to its safe-empty shape — fast
+ * and deterministic.
  *
  * For cases that need a specific tool behavior (best-effort failure,
  * live-tool freshness), we use `vi.spyOn(TOOL_REGISTRY.<name>, "invoke")`
  * to swap a single tool's body without disturbing the rest of the
  * registry. The plan is stubbed via `planTools` to point at that tool.
  *
- * llmCallCount invariants (per agent.ts comments):
+ * llmCallCount invariants (post-Phase-26):
  *   - smalltalk / out_of_scope  → 2  (Router + Synthesizer)
- *   - happy-path tool turn       → 3  (Router + Planner + Synthesizer)
- *   - Planner-overproduce retry → 4  (Router + Planner ×2 + Synth)
+ *   - happy-path tool turn       → 4  (Router + Planner + Critic + Synth)
+ *   - Planner-overproduce retry → 5  (Router + Planner ×2 + Critic + Synth)
+ *   - Critic static-veto         → +0 (no LLM call when usedLlm=false)
+ *   - One replan after critic1 retry → +2 (Planner2 + Critic2)
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -61,6 +64,36 @@ function makeSynth(text = "answer") {
       freshnessHint: string;
     }) => `[${text} for ${args.question}]`,
   );
+}
+
+/**
+ * Stub critic. Returns `verdict: "ok"` with `usedLlm: true` by default
+ * (so happy-path llmCallCount=4 holds). Pass `{ verdict: "retry", ... }`
+ * to test the replan path; pass `{ usedLlm: false }` to simulate
+ * static-veto.
+ */
+function makeCritic(
+  override: Partial<{
+    verdict: "ok" | "retry";
+    reason: string;
+    replanHint: string | null;
+    disclaimer: string | null;
+    failedInvariant: string | null;
+    usedLlm: boolean;
+  }> = {},
+) {
+  return vi.fn(async (input: { history: unknown[] }) => ({
+    pass: input.history.length + 1,
+    verdict: override.verdict ?? "ok",
+    reason: override.reason ?? "stub-ok",
+    replanHint:
+      override.verdict === "retry" ? override.replanHint ?? "stub-hint" : null,
+    disclaimer: override.disclaimer ?? null,
+    failedInvariant: override.failedInvariant ?? null,
+    startedAt: 0,
+    finishedAt: 100,
+    usedLlm: override.usedLlm ?? true,
+  }));
 }
 
 /**
@@ -131,7 +164,7 @@ describe("ask — out_of_scope path", () => {
 /* ----- 3. lookup happy-path ----------------------------------------- */
 
 describe("ask — lookup happy-path", () => {
-  it("uses findCustomerByPhoneOrName in plan, llmCallCount=3", async () => {
+  it("uses findCustomerByPhoneOrName in plan, llmCallCount=4 (Router+Plan+Critic+Synth)", async () => {
     const route = makeRoute("lookup");
     const planSteps: PlanStep[] = [
       {
@@ -142,19 +175,23 @@ describe("ask — lookup happy-path", () => {
     ];
     const plan = makePlan(planSteps);
     const synth = makeSynth("lookup");
+    const critic = makeCritic();
 
     const res = await ask("Andrew Kim 정보", {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: critic,
     });
 
     expect(res.trace.category).toBe("lookup");
     expect(res.trace.plan).toEqual(planSteps);
-    expect(res.trace.llmCallCount).toBe(3);
+    expect(res.trace.llmCallCount).toBe(4);
     expect(res.trace.toolCalls).toHaveLength(1);
     expect(res.trace.toolCalls[0]!.toolName).toBe("findCustomerByPhoneOrName");
     expect(res.trace.toolCalls[0]!.errorMessage).toBeNull(); // safe-empty success
+    expect(res.trace.criticCalls).toHaveLength(1);
+    expect(res.trace.criticCalls[0]!.verdict).toBe("ok");
   });
 });
 
@@ -181,11 +218,12 @@ describe("ask — aggregate happy-path", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
     });
 
     expect(res.trace.plan[0]!.toolName).toBe("aggregateRevenue");
     expect(res.trace.toolCalls[0]!.toolName).toBe("aggregateRevenue");
-    expect(res.trace.llmCallCount).toBe(3);
+    expect(res.trace.llmCallCount).toBe(4);
   });
 });
 
@@ -212,18 +250,19 @@ describe("ask — compare happy-path", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
     });
 
     expect(res.trace.plan[0]!.toolName).toBe("compareTimeWindows");
     expect(res.trace.toolCalls[0]!.toolName).toBe("compareTimeWindows");
-    expect(res.trace.llmCallCount).toBe(3);
+    expect(res.trace.llmCallCount).toBe(4);
   });
 });
 
-/* ----- 6. planner overproduce → llmCallCount=4 ---------------------- */
+/* ----- 6. planner overproduce → llmCallCount=5 ---------------------- */
 
 describe("ask — planner overproduce", () => {
-  it("counts the retry hop (llmCallCount=4)", async () => {
+  it("counts the retry hop (llmCallCount=5 = Router+Planner×2+Critic+Synth)", async () => {
     const route = makeRoute("aggregate");
     // Return 6 steps — over the PLANNER_MAX_PLAN_STEPS=5 cap.
     const sixSteps: PlanStep[] = Array.from({ length: 6 }, (_, i) => ({
@@ -246,9 +285,10 @@ describe("ask — planner overproduce", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
     });
 
-    expect(res.trace.llmCallCount).toBe(4);
+    expect(res.trace.llmCallCount).toBe(5);
     // Plan is preserved as-returned (the cap in the real planner is
     // internal; the orchestrator simply records what came back).
     expect(res.trace.plan).toHaveLength(6);
@@ -280,6 +320,7 @@ describe("ask — tool best-effort failure", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
     });
 
     expect(spy).toHaveBeenCalledOnce();
@@ -319,6 +360,7 @@ describe("ask — live tool success rewrites freshnessHint", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
       // Provide a baseline so we can prove the pivot happened.
       resolveFreshnessHint: async () => "stale-baseline",
     });
@@ -378,6 +420,7 @@ describe("ask — resolveFreshnessHint pass-through", () => {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: makeCritic(),
       resolveFreshnessHint: async () => "2026-05-15 03:00 ET 기준",
     });
 
@@ -408,10 +451,10 @@ describe("ask — top-level and trace answerMarkdown agree", () => {
   });
 });
 
-/* ----- 12. happy-path llmCallCount=3 (lookup with single tool) ------ */
+/* ----- 12. happy-path llmCallCount=4 (lookup + critic ok) ----------- */
 
 describe("ask — happy-path llmCallCount invariant", () => {
-  it("lookup with single tool produces exactly 3 LLM calls", async () => {
+  it("lookup with single tool + 1 critic-ok produces exactly 4 LLM calls", async () => {
     const route = makeRoute("lookup");
     const plan = makePlan([
       {
@@ -421,16 +464,19 @@ describe("ask — happy-path llmCallCount invariant", () => {
       },
     ]);
     const synth = makeSynth("ok");
+    const critic = makeCritic();
 
     const res = await ask("Kim 손님 정보", {
       routeQuestion: route,
       planTools: plan,
       synthesizeAnswer: synth,
+      evaluatePlan: critic,
     });
 
-    expect(res.trace.llmCallCount).toBe(3);
+    expect(res.trace.llmCallCount).toBe(4);
     expect(route).toHaveBeenCalledTimes(1);
     expect(plan).toHaveBeenCalledTimes(1);
+    expect(critic).toHaveBeenCalledTimes(1);
     expect(synth).toHaveBeenCalledTimes(1);
   });
 });
