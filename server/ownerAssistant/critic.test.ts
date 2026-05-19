@@ -151,7 +151,7 @@ describe("critic — fixture 2: 60일 이상 안 온 손님 0건 (I6 legitimate)
     const input = makeInput({
       question: "60일 이상 안 온 손님 알려줘",
       category: "aggregate",
-      plan: [makeStep("findInactiveCustomers", { inactiveDays: 60, minPriorVisits: 3 })],
+      plan: [makeStep("findInactiveCustomers", { inactiveSinceDays: 60, minPriorVisits: 3 })],
       toolResults: { "findInactiveCustomers#0": { customers: [], totalCount: 0 } },
       toolCalls: [makeToolCall("findInactiveCustomers", JSON.stringify({ customers: [] }))],
     });
@@ -181,8 +181,8 @@ describe("critic — fixture 3: 최근 2주 단골 동향 (I4 window ok)", () =>
       category: "aggregate",
       plan: [
         makeStep("aggregateRepeatCustomers", {
-          windowFrom: "2026-05-04T00:00:00Z",
-          windowTo: "2026-05-18T16:00:00Z",
+          dateFrom: "2026-05-04T00:00:00Z",
+          dateTo: "2026-05-18T16:00:00Z",
           lookbackDays: 90,
         }),
       ],
@@ -218,8 +218,8 @@ describe("critic — fixture 4: 지난 주 요일별 매출, groupBy='day' (I3 r
       category: "aggregate",
       plan: [
         makeStep("aggregateRevenue", {
-          windowFrom: "2026-04-01T00:00:00Z",
-          windowTo: "2026-05-01T00:00:00Z",
+          dateFrom: "2026-04-01T00:00:00Z",
+          dateTo: "2026-05-01T00:00:00Z",
           groupBy: "day",
         }),
       ],
@@ -256,9 +256,9 @@ describe("critic — fixture 5: 평일 점심 매출 0 (I6 anomaly retry)", () =
       category: "aggregate",
       plan: [
         makeStep("aggregateRevenue", {
-          windowFrom: "2026-05-18T11:00:00Z",
-          windowTo: "2026-05-18T14:00:00Z",
-          groupBy: "hour",
+          dateFrom: "2026-05-18T11:00:00Z",
+          dateTo: "2026-05-18T14:00:00Z",
+          groupBy: "day",
         }),
       ],
       toolResults: {
@@ -343,8 +343,8 @@ describe("critic — fixture 7: history-aware retry (orchestrator handles abort)
       category: "aggregate",
       plan: [
         makeStep("aggregateRevenue", {
-          windowFrom: "2026-05-11T00:00:00Z",
-          windowTo: "2026-05-18T00:00:00Z",
+          dateFrom: "2026-05-11T00:00:00Z",
+          dateTo: "2026-05-18T00:00:00Z",
           groupBy: "day", // planner still got it wrong
         }),
       ],

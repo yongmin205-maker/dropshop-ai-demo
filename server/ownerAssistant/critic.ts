@@ -24,7 +24,8 @@
  */
 
 import { invokeLLM } from "../_core/llm";
-import type { PlanStep, QuestionCategory, ToolCall } from "./types";
+import { TOOL_REGISTRY } from "./tools";
+import { TOOL_NAMES, type PlanStep, type QuestionCategory, type ToolCall, type ToolName } from "./types";
 
 /* ---------- Timing budgets (DP2 — tune retroactively from prod data) ---------- */
 
@@ -111,10 +112,100 @@ export type CriticDeps = {
  * value, it's always `verdict: "retry"` with `usedLlm: false` — static
  * cannot stamp "ok" per DP1.
  *
- * Phase 26 commit 2 fills this body.
+ * Static invariants checked, in order (first miss wins):
+ *   - S1 — `plan.length === 0` (planner returned no steps)
+ *   - S3 — any step references a tool not in `TOOL_NAMES` / `TOOL_REGISTRY`
+ *   - S2 — any step's `argsJson` is non-parseable JSON, or parses but
+ *          fails the tool's `inputSchema.safeParse` (this folds the
+ *          broken-JSON and zod-fail cases under one invariant since both
+ *          are arg-validation failures from the executor's POV)
+ *   - S4 — every tool call recorded a non-null `errorMessage` (only
+ *          fires when `toolCalls.length > 0`; an empty list defers to
+ *          the LLM critic, which has the richer view)
+ *
+ * No LLM call is made; `usedLlm` is always `false` on the returned
+ * CriticCall. The `pass` field is 1-indexed and uses `history.length + 1`
+ * so a static veto on critic-pass-2 still reports `pass: 2` honestly.
  */
-export function staticPreCheck(_input: CriticInput): CriticCall | null {
-  throw new Error("staticPreCheck not implemented (Phase 26 commit 2)");
+export function staticPreCheck(
+  input: CriticInput,
+  deps: CriticDeps = {},
+): CriticCall | null {
+  const clock = deps.clock ?? Date.now;
+  const startedAt = clock();
+  const pass = input.history.length + 1;
+
+  const veto = (failedInvariant: string, reason: string, replanHint: string): CriticCall => ({
+    pass,
+    verdict: "retry",
+    reason,
+    replanHint,
+    disclaimer: null,
+    failedInvariant,
+    startedAt,
+    finishedAt: clock(),
+    usedLlm: false,
+  });
+
+  // S1 — empty plan.
+  if (input.plan.length === 0) {
+    return veto(
+      "S1",
+      "Planner가 빈 계획을 반환했습니다. 도구 호출이 한 건도 없습니다.",
+      "질문에 맞는 도구를 최소 1개 선택해 계획에 포함하세요.",
+    );
+  }
+
+  // S3 — unknown tool name. Done before S2 so we can safely look up the
+  // tool's zod schema in the next loop without an existence check.
+  for (const step of input.plan) {
+    if (!(TOOL_NAMES as readonly ToolName[]).includes(step.toolName)) {
+      return veto(
+        "S3",
+        `알 수 없는 도구 이름: ${String(step.toolName)}`,
+        `등록된 도구만 사용하세요: ${TOOL_NAMES.join(", ")}.`,
+      );
+    }
+  }
+
+  // S2 — broken JSON OR zod-fail args.
+  for (const step of input.plan) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(step.argsJson);
+    } catch {
+      return veto(
+        "S2",
+        `${step.toolName} 호출의 args가 유효한 JSON이 아닙니다.`,
+        `${step.toolName}의 args를 ToolDefinition.argsExample 형태의 유효 JSON으로 다시 작성하세요.`,
+      );
+    }
+    const tool = TOOL_REGISTRY[step.toolName];
+    const zodResult = tool.inputSchema.safeParse(parsed);
+    if (!zodResult.success) {
+      return veto(
+        "S2",
+        `${step.toolName} 호출의 args가 입력 스키마를 통과하지 못했습니다.`,
+        `${step.toolName}의 inputSchema 필수 필드를 모두 채워서 다시 계획하세요. argsExample을 참고하세요.`,
+      );
+    }
+  }
+
+  // S4 — all tool calls failed. Only meaningful when there are any
+  // toolCalls; an empty list (e.g. critic invoked before executor for
+  // some future use) defers to the LLM critic.
+  if (input.toolCalls.length > 0) {
+    const allFailed = input.toolCalls.every((c) => c.errorMessage !== null);
+    if (allFailed) {
+      return veto(
+        "S4",
+        "계획에 포함된 모든 도구 호출이 실패했습니다.",
+        "이전 도구들이 모두 실패했으니, 다른 도구 조합이나 다른 인자 값으로 재계획하세요.",
+      );
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -134,13 +225,18 @@ export async function llmCritic(
  * Orchestrator-facing entry point. Runs `staticPreCheck` first; if static
  * is silent, runs `llmCritic`. Always emits exactly one CriticCall.
  *
- * Phase 26 commit 3 fills this body.
+ * Commit 2 wires only the static-short-circuit path. The LLM branch
+ * still throws via `llmCritic` until commit 3 fills it in.
  */
 export async function evaluatePlan(
-  _input: CriticInput,
-  _deps: CriticDeps = {},
+  input: CriticInput,
+  deps: CriticDeps = {},
 ): Promise<CriticCall> {
-  throw new Error("evaluatePlan not implemented (Phase 26 commit 3)");
+  const staticResult = staticPreCheck(input, deps);
+  if (staticResult !== null) {
+    return staticResult;
+  }
+  return llmCritic(input, deps);
 }
 
 /* ---------- Internal exports for tests ---------- */
