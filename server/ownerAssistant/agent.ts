@@ -240,6 +240,11 @@ export async function ask(
   }
 
   // 3. Synthesizer
+  // TODO(phase27): synth-answer critic — Phase 26 evaluates plan+results
+  // only (DP / arch §6). A separate critic pass should evaluate the
+  // synthesizer's Korean answer when it contains ≥ N numeric tokens
+  // (threshold tuned in prod). Integration point: between `synth(...)`
+  // and the appendDisclaimer call below. See phase26_architecture.md §6.
   const synthStart = clock().getTime();
   const rawAnswer = await synth({
     question,

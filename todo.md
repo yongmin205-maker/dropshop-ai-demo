@@ -764,3 +764,11 @@ Pre-existing failures (unaffected by this PR — verified at file-level git log)
 - [ ] Brief specifies: problem statement, repo URL, key paths, success criteria, output format, max iterations
 - [ ] Brief explicitly instructs Claude not to assume and to ask clarifying questions before coding
 - [ ] Deliver brief as attachment for the user to paste into Claude
+
+## Phase 27 — synth-answer critic (deferred from Phase 26)
+
+Phase 26 critic evaluates plan + tool results only (per phase26_architecture.md §6). A separate phase will add a second critic pass on the synthesizer's Korean answer.
+
+- [ ] Separate LLM/pass from Phase 26's plan critic. Reason: Phase 26 critic reasons ≤2 sentences over structured plan+results JSON. Synth-answer validation is a different task (long Korean prose against a numeric ground truth) and deserves its own prompt + model decision.
+- [ ] Trigger condition: answer contains ≥ N numeric tokens (threshold tuned in prod from logged answers). Running synth critic on every answer doubles LLM cost; gating on "answer makes numerical claims" catches the hallucination class that matters without burning tokens on greetings/explanations.
+- [ ] Integration point already marked: `TODO(phase27)` comment at the synth call site in `server/ownerAssistant/agent.ts` — that's where the second critic pass slots in.

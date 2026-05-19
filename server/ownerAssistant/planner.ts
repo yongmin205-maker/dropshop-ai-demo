@@ -70,6 +70,12 @@ function basePrompt(now: Date): string {
         `- ${t.name} (${t.category}): ${t.description}\n  args 예시: ${JSON.stringify(t.argsExample)}`,
     )
     .join("\n");
+  // Phase 26 — heuristic-accumulator rules (dayOfWeek, fair-pace,
+  // compareTimeWindows worked example, "이번 달" date-math worked
+  // example) retired here. The critic loop (server/ownerAssistant/
+  // critic.ts → invariants I1-I7) catches these semantic defects
+  // and replans with a targeted hint, replacing the prompt-patching
+  // we used to do. Net: −16 lines from basePrompt.
   return `당신은 매장 점주 질문에 답하기 위한 tool 호출 계획을 세웁니다.
 오늘 시각: ${isoNow} (UTC).
 
@@ -79,12 +85,8 @@ ${catalogue}
 규칙:
 - 최대 ${MAX_PLAN_STEPS}개 tool 호출까지. 짧을수록 좋음.
 - 각 step의 args는 위 "args 예시"와 **같은 필드명/형태**로 채워라. argsExample이 {}인 tool(countActiveGarments, aggregateRevenueLive)을 제외하고는 절대 빈 객체 {}를 반환하지 말 것.
-- 날짜/시간 값은 모두 ISO 8601 UTC ("2026-05-18T00:00:00Z" 형식). "지난주", "이번 달" 같은 한국어 표현은 오늘 시각 기준으로 ISO로 변환해서 채워라. 예: 오늘이 5/18(월)이면 "이번 달"=2026-05-01~2026-06-01, "지난 달"=2026-04-01~2026-05-01, "지난 주"=2026-05-11~2026-05-18 (월→월 7일 윈도우), "이번 주"=2026-05-18~2026-05-25.
-- 요일별("어느 요일에 매출이 제일 높았냐") 질문에는 aggregateRevenue의 groupBy 값을 "dayOfWeek"로 설정해야 함. "day"로 두면 날짜별 일별 매출이 나와 원하는 답이 안 됨.
-- compareTimeWindows의 windowA/windowB는 각각 {from, to} 객체로 두 기간을 채워라. metric은 revenue/order_count/new_customer_count/repeat_visit_count 중 하나. 절대 args를 빈 객체로 두지 말 것 — 두 기간을 명시적으로 채워야 한다.
-- compareTimeWindows의 mode 선택: windowB가 **아직 진행 중인 기간**("이번 달", "이번 주", "이번 분기")이면 반드시 mode="fair-pace"로 호출하라. 그러면 tool이 windowA를 같은 일수로 잘라 공정 비교한다. 예: 오늘이 5/18이면 "지난달 vs 이번달"은 windowA=4/1~5/1, windowB=5/1~5/19(=오늘+1), mode="fair-pace" → tool이 windowA를 5/1까지가 아닌 4/19까지 잘라 18일 vs 18일로 비교. 완료된 과거 기간끼리(예: 3월 vs 4월) 비교할 때는 mode 생략 또는 "as-given".
+- 날짜/시간 값은 모두 ISO 8601 UTC ("2026-05-18T00:00:00Z" 형식). "지난주", "이번 달" 등 한국어 표현은 오늘 시각 기준으로 ISO 윈도우로 변환해서 채워라.
 - 같은 tool을 두 번 부르지 말 것 — 같은 데이터를 두 번 가져오지 않음.
-- aggregate 질문에 lookup tool을 쓰지 말 것. lookup 질문에 aggregate tool을 쓰지 말 것.
 - "오늘" / "방금 영업 중"이 아닌 과거 기간 질문에는 mirror tools (aggregateRevenue 등)를 쓸 것. live tools는 오늘자 전용.
 - reason은 짧은 한국어 한 줄.
 `;
