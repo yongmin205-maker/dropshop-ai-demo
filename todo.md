@@ -1,5 +1,9 @@
 # DropShop AI SMS Assistant — TODO
 
+> **Next Claude session: read `docs/mainstreet-ai/claude_code_prompts/phase26_next_session_handoff.md` FIRST.**
+> Phase 26 (Owner Assistant critic loop) is fully landed on branch `phase26/critic-loop`, PR #1 is open. Manus access ended 2026-05-20 before the live-LLM smoke could run — the handoff doc explains what's outstanding and how to resolve it without Manus.
+
+
 ## Core Features
 - [x] Schema: conversations, messages, processingLogs, escalations, mockCustomers, mockOrders, mockPriceList
 - [x] Seed Mock CleanCloud POS data (customers, orders w/ 4 statuses, price list, memberships)
