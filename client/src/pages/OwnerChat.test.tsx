@@ -63,6 +63,8 @@ const SAMPLE_TRACE: AgentTrace = {
   answerMarkdown: "지난 주 매출은 $1,234.56 입니다.\n(데이터: 2026-05-15 03:00 ET 기준)",
   totalLatencyMs: 4200,
   llmCallCount: 3,
+  events: [],
+  criticCalls: [],
 };
 
 vi.mock("@/lib/trpc", () => {

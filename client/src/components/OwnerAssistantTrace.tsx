@@ -72,6 +72,19 @@ export function OwnerAssistantTrace({ trace }: { trace: AgentTrace }) {
           <span className="text-[10px] text-muted-foreground tabular-nums">
             {trace.llmCallCount} LLM call{trace.llmCallCount === 1 ? "" : "s"}
           </span>
+          {trace.criticCalls.length > 0 && (
+            <Badge
+              variant="outline"
+              className={`text-[10px] ${
+                trace.criticCalls[trace.criticCalls.length - 1]?.verdict === "ok"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : "bg-rose-50 text-rose-700 border-rose-200"
+              }`}
+            >
+              critic {trace.criticCalls.length}× ·{" "}
+              {trace.criticCalls[trace.criticCalls.length - 1]?.verdict}
+            </Badge>
+          )}
         </div>
 
         {/* Plan table. Each tool's args is a nested collapsible to keep the
@@ -114,6 +127,70 @@ export function OwnerAssistantTrace({ trace }: { trace: AgentTrace }) {
             </table>
           )}
         </details>
+
+        {/* Critic passes — Phase 26. One row per evaluatePlan call.
+            Verdict gets a red/green chip per DP4; static-veto rows
+            label themselves so the operator can tell which passes
+            burned LLM tokens vs which were free. */}
+        {trace.criticCalls.length > 0 && (
+          <details
+            open={trace.criticCalls.some((c) => c.verdict === "retry")}
+            className="rounded border border-border bg-background"
+          >
+            <summary className="cursor-pointer select-none px-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
+              Critic ({trace.criticCalls.length})
+            </summary>
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="px-2 py-1 font-medium">Pass</th>
+                  <th className="px-2 py-1 font-medium">Verdict</th>
+                  <th className="px-2 py-1 font-medium">Invariant</th>
+                  <th className="px-2 py-1 font-medium">Reason</th>
+                  <th className="px-2 py-1 font-medium">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trace.criticCalls.map((c, i) => (
+                  <tr key={`crit-${i}`} className="border-t border-border align-top">
+                    <td className="px-2 py-1 tabular-nums text-foreground/80">{c.pass}</td>
+                    <td className="px-2 py-1">
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${
+                          c.verdict === "ok"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200"
+                        }`}
+                      >
+                        {c.verdict}
+                      </Badge>
+                    </td>
+                    <td className="px-2 py-1 font-mono text-foreground/80">
+                      {c.failedInvariant ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-foreground/80">
+                      <div>{c.reason}</div>
+                      {c.replanHint && (
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          ↳ replan: {c.replanHint}
+                        </div>
+                      )}
+                      {c.disclaimer && (
+                        <div className="mt-0.5 text-[10px] italic text-amber-700">
+                          {c.disclaimer}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-[10px] text-muted-foreground">
+                      {c.usedLlm ? "LLM" : "static"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
 
         {/* Tool-calls table — actuals, including failures. */}
         <details className="rounded border border-border bg-background">
